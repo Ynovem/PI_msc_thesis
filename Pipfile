@@ -8,6 +8,7 @@ tensorflow = "*"
 keras = "*"
 pillow = "*"
 pydot = "*"
+matplotlib = "*"
 
 [dev-packages]
 
