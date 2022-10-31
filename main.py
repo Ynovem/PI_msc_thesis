@@ -1,3 +1,6 @@
+import os
+import shutil
+
 import numpy as np
 from PIL import Image
 
@@ -43,14 +46,21 @@ class Layer:
             )
 
 
-def create_model(layers):
+def create_model(layers, model_path):
     model = Sequential()
 
     for layer in layers:
         model.add(layer.create())
 
     model.summary()
-    plot_model(model, show_shapes=True, show_layer_names=True, rankdir='LR', show_layer_activations=True)
+    plot_model(
+        model,
+        show_shapes=True,
+        show_layer_names=True,
+        rankdir='LR',
+        show_layer_activations=True,
+        to_file=model_path
+    )
 
     model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['mae'])
 
@@ -66,7 +76,7 @@ def create_model(layers):
 #     return model
 
 
-def print_info(predicts, Y_test, result_folder):
+def print_info(predicts, Y_test, result_folder, input_sblp, input_ryser):
     # image_number = 1
     # predicted_nn = predicts[image_number].round().astype('int').reshape(image_size, image_size)
     # predicted_ryser = ryser_algorithm(Y_test[image_number].reshape(image_size, image_size))
@@ -125,33 +135,66 @@ def print_info(predicts, Y_test, result_folder):
 
         plt.savefig(f'{result_folder}/{i}.png')
 
-    # print info
-    nn_rme = 0
-    nn_pe = 0
-    ryser_rme = 0
-    ryser_pe = 0
+    results = {
+        'ryser': {
+            'rme': [],
+            'pe': [],
+        },
+        'nn': {
+            'rme': [],
+            'pe': [],
+        },
+    }
 
     for i in range(len(predicts)):
         predicted_NN = predicts[i].round().astype('int').reshape(image_size, image_size)
         predicted_ryser = ryser_algorithm(Y_test[i].reshape(image_size, image_size))
         original = Y_test[i].reshape(image_size, image_size)
 
-        nn_rme += relative_mean_error(original, predicted_NN)
-        nn_pe += pixel_error(original, predicted_NN)
-        ryser_rme += relative_mean_error(original, predicted_ryser)
-        ryser_pe += pixel_error(original, predicted_ryser)
+        results['ryser']['rme'].append(relative_mean_error(original, predicted_ryser))
+        results['ryser']['pe'].append(pixel_error(original, predicted_ryser))
+        results['nn']['rme'].append(relative_mean_error(original, predicted_NN))
+        results['nn']['pe'].append(pixel_error(original, predicted_NN))
 
-    avg_nn_rme = nn_rme / len(predicts)
-    avg_nn_pe = nn_pe / len(predicts)
-    avg_ryser_rme = ryser_rme / len(predicts)
-    avg_ryser_pe = ryser_pe / len(predicts)
-    print(f'          rme(%)  pe(%)')
-    print(f'   NN:    {avg_nn_rme:.2f}   {avg_nn_pe:.2f}')
-    print(f'Ryser:    {avg_ryser_rme:.2f}   {avg_ryser_pe:.2f}')
+    # print(f'min\t{np.min(a)}')
+    # print(f'mean\t{np.mean(a)}')
+    # print(f'median\t{np.median(a)}')
+    # print(f'max\t{np.max(a)}')
+    # print(f'std\t{np.std(a)}')
+
+    with open(f'{result_folder}/info.txt', 'w') as f:
+        f.write(f'Image size: {image_size}x{image_size}\n')
+        f.write(f'Samples: {desired_samples}\n')
+        f.write(f'Added inputs:\n')
+        f.write(f'    * SBLP: {input_sblp}\n')
+        f.write(f'    * Ryser: {input_ryser}\n')
+        f.write('\n')
+        f.write(f'              Ryser          NN\n')
+        f.write(f'rme\n')
+        f.write(f'    * min      {np.min(results["ryser"]["rme"]):>7.2f} %    {np.min(results["nn"]["rme"]):>7.2f} %\n')
+        f.write(f'    * max      {np.max(results["ryser"]["rme"]):>7.2f} %    {np.max(results["nn"]["rme"]):>7.2f} %\n')
+        f.write(f'    * avg      {np.mean(results["ryser"]["rme"]):>7.2f} %    {np.mean(results["nn"]["rme"]):>7.2f} %\n')
+        f.write(f'    * std      {np.std(results["ryser"]["rme"]):>7.2f} %    {np.std(results["nn"]["rme"]):>7.2f} %\n')
+        f.write(f'    * median   {np.median(results["ryser"]["rme"]):>7.2f} %    {np.median(results["nn"]["rme"]):>7.2f} %\n')
+        f.write(f' pe\n')
+        f.write(f'    * min      {np.min(results["ryser"]["pe"]):>7.2f} %    {np.min(results["nn"]["pe"]):>7.2f} %\n')
+        f.write(f'    * max      {np.max(results["ryser"]["pe"]):>7.2f} %    {np.max(results["nn"]["pe"]):>7.2f} %\n')
+        f.write(f'    * avg      {np.mean(results["ryser"]["pe"]):>7.2f} %    {np.mean(results["nn"]["pe"]):>7.2f} %\n')
+        f.write(f'    * std      {np.std(results["ryser"]["pe"]):>7.2f} %    {np.std(results["nn"]["pe"]):>7.2f} %\n')
+        f.write(f'    * median   {np.median(results["ryser"]["pe"]):>7.2f} %    {np.median(results["nn"]["pe"]):>7.2f} %\n')
+        f.write(f'\n')
 
 
+def main(result_folder_prefix, input_sblp, input_ryser):
+    result_folder = result_folder_prefix
+    if input_sblp:
+        result_folder += '-sblp'
+    if input_ryser:
+        result_folder += '-ryser'
+    result_folder += f'-{image_size}x{image_size}'
+    result_folder += f'-{desired_samples}PCS'
+    os.mkdir(result_folder)
 
-def main(result_folder):
     image = Image.open('images/phantom_class_02.png')
     image.load()
     raw_image = np.asarray(image, dtype='int32')
@@ -167,75 +210,36 @@ def main(result_folder):
     print(f'Train set: {train_sub_images.shape}')
     print(f'Test set: {test_sub_images.shape}')
 
-    feature_nodes_from_lbsp = 256
-    feature_nodes_from_lbsp = 0 # TODO TEST
-    feature_nodes_from_image = image_size * image_size
-    feature_nodes_from_image = image_size + image_size # TODO TEST
+    feature_nodes = image_size + image_size
+    if input_sblp:
+        feature_nodes += 256
+    if input_ryser:
+        feature_nodes += image_size * image_size
 
-    feature_nodes = feature_nodes_from_lbsp + feature_nodes_from_image
     result_nodes = image_size * image_size
 
-    # def custom_relu(x):
-    #     return tf.keras.activations.relu(x, max_value=1.0)
-
-    # model = create_model(
-    #     input_nodes=feature_nodes,
-    #     hidden_nodes=[64, 128, result_nodes],
-    #     activations=['relu', 'relu', 'sigmoid']
-    # )
     model = create_model(
         layers=[
-            Layer('input', Dense, 64, 'relu', input_nodes=feature_nodes),
-            Layer('hidden-1', Dense, 128, 'relu'),
+            Layer('input', Dense, 512, 'relu', input_nodes=feature_nodes),
+            Layer('hidden-1', Dense, 2048, 'relu'),
             Layer('output', Dense, result_nodes, 'sigmoid'),
-        ]
+        ],
+        model_path=f'{result_folder}/model.png',
     )
-
-    # # ryser
-    # model.add(Dense(512, input_shape=(feature_nodes,), activation='relu', name="hidden-1"))
-    # model.add(Dense(384, activation='relu', name="hidden-2"))
-    # projections TODO TEST
-
-
-
-    # def custom_loss_function(y_true, y_pred):
-    # #    squared_difference = tf.square(y_true - y_pred)
-    # #    return tf.reduce_mean(squared_difference, axis=-1)
-    #     mae = tf.keras.losses.MeanAbsoluteError()
-    #     if custom_loss_function.val == 1:
-    #         tf.print('.')
-    #         # tf.print(y_true)
-    #         # tf.print(y_pred)
-    #         custom_loss_function.val = 0
-    #     # return mae(y_true, y_pred)
-    #     return mae(y_true, tf.convert_to_tensor(y_pred.numpy().round().astype('int').astype('float32')))
-    # custom_loss_function.val = 1
-    #
-    # # model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
-    # # model.compile(optimizer='adam', loss=tf.keras.losses.MeanAbsolutePercentageError, metrics=['accuracy'])
-    # # model.compile(optimizer='sgd', loss=tf.keras.losses.MeanAbsoluteError(reduction=tf.keras.losses.Reduction.SUM), metrics=['accuracy'])
-    #
-    # # model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
-    # # model.compile(optimizer='adam', loss=tf.keras.losses.MeanAbsoluteError(reduction=tf.keras.losses.Reduction.SUM), metrics=['accuracy'])
-    # # model.compile(optimizer='adam', loss=tf.keras.losses.MeanAbsoluteError(), metrics=['mae'])
-    # # model.compile(optimizer='sgd', loss='mae', metrics=['mae'])
-    # # model.compile(optimizer='sgd', loss=custom_loss_function, metrics=['accuracy'], run_eagerly=True)
-    #
-    # # def extractFeatures(A):
-    # #     slbp_result = slbp(A)
-    # #     predicted_ryser = ryser_algorithm(A.reshape(image_size, image_size))
-    # #     return np.concatenate([slbp_result, predicted_ryser.reshape(image_size * image_size)]), A.reshape(result_nodes)
-    # #     # return np.concatenate([A.sum(axis=0)/normalization, A.sum(axis=1)/normalization]), A.reshape(result_nodes)
-    # #
-    # #     # train_sub_images
-    # #     # test_sub_images
-    # #     # prepared_sub_images = np.array([extractFeatures(sub_image) for sub_image in all_sub_images])
-
 
     def extract_features(A):
         proj_a = A.sum(axis=0)
         proj_b = A.sum(axis=1)
-        return np.concatenate([proj_a / np.amax(proj_a), proj_b / np.amax(proj_b)]), A.reshape(result_nodes)
+
+        X = [proj_a / np.amax(proj_a), proj_b / np.amax(proj_b)]
+
+        if input_sblp:
+            X.append(slbp(A))
+
+        if input_ryser:
+            X.append(ryser_algorithm(A).reshape(image_size*image_size))
+
+        return np.concatenate(X), A.reshape(result_nodes)
 
     X_train = []
     Y_train = []
@@ -289,7 +293,7 @@ def main(result_folder):
 
 
     # Note: lower batch_size help to the training depending on the training-set size
-    batch_size = 32
+    batch_size = 16
     epochs = 10
     shuffle = True
 
@@ -311,12 +315,20 @@ def main(result_folder):
     print(X_test.shape)
     print(predicts.shape)
 
-    print_info(predicts, Y_test, result_folder)
+    print_info(
+        predicts=predicts,
+        Y_test=Y_test,
+        result_folder=result_folder,
+        input_sblp=input_sblp, input_ryser=input_ryser
+    )
 
 
 
 if __name__ == '__main__':
     # Fixing random state for reproducibility
     tf.keras.utils.set_random_seed(1)
-    main('results')
-
+    main(
+        result_folder_prefix='results',
+        input_sblp=True,
+        input_ryser=False
+    )
