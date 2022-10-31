@@ -11,14 +11,13 @@ from keras.layers import Dense, Dropout, Activation
 from tensorflow.keras.optimizers import Adam
 
 import matplotlib.pyplot as plt
-# %matplotlib inline
+# %matplotlib inline # for jupyter-notebook
 
 from timeit import default_timer as timer   # for verbose output
 
 from helpers import *
 
-image_size = 16
-# desired_samples = 10000
+image_size = 32
 desired_samples = 1000
 
 
@@ -57,7 +56,8 @@ def create_model(layers, model_path):
         model,
         show_shapes=True,
         show_layer_names=True,
-        rankdir='LR',
+        rankdir='TB',
+        # rankdir='LR',
         show_layer_activations=True,
         to_file=model_path
     )
@@ -77,42 +77,6 @@ def create_model(layers, model_path):
 
 
 def print_info(predicts, Y_test, result_folder, input_sblp, input_ryser):
-    # image_number = 1
-    # predicted_nn = predicts[image_number].round().astype('int').reshape(image_size, image_size)
-    # predicted_ryser = ryser_algorithm(Y_test[image_number].reshape(image_size, image_size))
-    # original = Y_test[image_number].reshape(image_size, image_size)
-    #
-    # print(f'{"="*30} ORIGINAL {"="*30}')
-    # print(original)
-    # print(f'{"="*30}    NN {"="*30}')
-    # print(predicted_nn)
-    # print(f'{"="*30}   RYSER  {"="*30}')
-    # print(predicted_ryser)
-    #
-    #
-    # original_r, original_c = calculate_projections(original)
-    #
-    # print('NN')
-    # print(f'\trme: {relative_mean_error(original, predicted_nn)}')
-    # print(f'\tp e: {pixel_error(original, predicted_nn)}')
-    # nn_r, nn_c = calculate_projections(predicted_nn)
-    # print(f'\tprojection differences:\n\t\trows: {original_r - nn_r}\n\t\tcols: {original_c - nn_c}')
-    # print(f'\teuclidean distance:\n\t\trows:{np.linalg.norm(original_r - nn_r)}\n\t\tcols:: {np.linalg.norm(original_c - nn_c)}')
-    #
-    # print('Ryser')
-    # print(f'\trme: {relative_mean_error(original, predicted_ryser)}')
-    # print(f'\tp e: {pixel_error(original, predicted_ryser)}')
-    # ryser_r, ryser_c = calculate_projections(predicted_ryser)
-    # print(f'\tprojection differences:\n\t\trows: {original_r - ryser_r}\n\t\tcols: {original_c - ryser_c}')
-    # print(f'\teuclidean distance:\n\t\trows:{np.linalg.norm(original_r - ryser_r)}\n\t\tcols:: {np.linalg.norm(original_c - ryser_c)}')
-
-    # fig, axs = plt.subplots(1, 3)
-    # axs[0].set_title('original')
-    # axs[0].imshow(original*16, interpolation='none', cmap=plt.cm.binary)
-    # axs[1].set_title('NN')
-    # axs[1].imshow(predicted_nn, interpolation='none', cmap=plt.cm.binary)
-    # axs[2].set_title('Ryser')
-    # axs[2].imshow(predicted_ryser, interpolation='none', cmap=plt.cm.binary)
     max_picture = 10
     for i in range(len(predicts)):
         if max_picture == 0:
@@ -147,20 +111,14 @@ def print_info(predicts, Y_test, result_folder, input_sblp, input_ryser):
     }
 
     for i in range(len(predicts)):
-        predicted_NN = predicts[i].round().astype('int').reshape(image_size, image_size)
+        predicted_nn = predicts[i].round().astype('int').reshape(image_size, image_size)
         predicted_ryser = ryser_algorithm(Y_test[i].reshape(image_size, image_size))
         original = Y_test[i].reshape(image_size, image_size)
 
         results['ryser']['rme'].append(relative_mean_error(original, predicted_ryser))
         results['ryser']['pe'].append(pixel_error(original, predicted_ryser))
-        results['nn']['rme'].append(relative_mean_error(original, predicted_NN))
-        results['nn']['pe'].append(pixel_error(original, predicted_NN))
-
-    # print(f'min\t{np.min(a)}')
-    # print(f'mean\t{np.mean(a)}')
-    # print(f'median\t{np.median(a)}')
-    # print(f'max\t{np.max(a)}')
-    # print(f'std\t{np.std(a)}')
+        results['nn']['rme'].append(relative_mean_error(original, predicted_nn))
+        results['nn']['pe'].append(pixel_error(original, predicted_nn))
 
     with open(f'{result_folder}/info.txt', 'w') as f:
         f.write(f'Image size: {image_size}x{image_size}\n')
@@ -220,8 +178,10 @@ def main(result_folder_prefix, input_sblp, input_ryser):
 
     model = create_model(
         layers=[
-            Layer('input', Dense, 512, 'relu', input_nodes=feature_nodes),
-            Layer('hidden-1', Dense, 2048, 'relu'),
+            Layer('input', Dense, 272, 'relu', input_nodes=feature_nodes),
+            Layer('hidden-1', Dense, 256, 'relu'),
+            # Layer('input', Dense, 512, 'relu', input_nodes=feature_nodes),
+            # Layer('hidden-1', Dense, 2048, 'relu'),
             Layer('output', Dense, result_nodes, 'sigmoid'),
         ],
         model_path=f'{result_folder}/model.png',
