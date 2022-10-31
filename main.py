@@ -16,10 +16,57 @@ from helpers import *
 
 image_size = 16
 # desired_samples = 10000
-desired_samples = 100
+desired_samples = 1000
 
 
-def main():
+class Layer:
+    def __init__(self, name, layer_ctor, nodes, activation, input_nodes=0):
+        self.layer_ctor = layer_ctor
+        self.nodes = nodes
+        self.activation = activation
+        self.name = name
+        self.input_nodes = input_nodes
+
+    def create(self):
+        if self.input_nodes:
+            return self.layer_ctor(
+                self.nodes,
+                input_shape=(self.input_nodes,),
+                activation=self.activation,
+                name=self.name
+            )
+        else:
+            return self.layer_ctor(
+                self.nodes,
+                activation=self.activation,
+                name=self.name
+            )
+
+
+def create_model(layers):
+    model = Sequential()
+
+    for layer in layers:
+        model.add(layer.create())
+
+    model.summary()
+    plot_model(model, show_shapes=True, show_layer_names=True, rankdir='LR', show_layer_activations=True)
+
+    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+
+    return model
+
+# def create_model(input_nodes, hidden_nodes, activations):
+#     model = Sequential()
+#
+    # model.add(Dense(hidden_nodes[0], input_shape=(input_nodes,), activation=activations[0], name="hidden-1"))
+#     model.add(Dense(hidden_nodes[1], activation=activations[1], name="hidden-2"))
+#     model.add(Dense(hidden_nodes[2], activation=activations[2], name="output"))
+#
+#     return model
+
+
+def main(result_folder):
     image = Image.open('images/phantom_class_02.png')
     image.load()
     raw_image = np.asarray(image, dtype='int32')
@@ -36,56 +83,74 @@ def main():
     print(f'Test set: {test_sub_images.shape}')
 
     feature_nodes_from_lbsp = 256
+    feature_nodes_from_lbsp = 0 # TODO TEST
     feature_nodes_from_image = image_size * image_size
+    feature_nodes_from_image = image_size + image_size # TODO TEST
 
     feature_nodes = feature_nodes_from_lbsp + feature_nodes_from_image
     result_nodes = image_size * image_size
 
+    # def custom_relu(x):
+    #     return tf.keras.activations.relu(x, max_value=1.0)
+
+    # model = create_model(
+    #     input_nodes=feature_nodes,
+    #     hidden_nodes=[64, 128, result_nodes],
+    #     activations=['relu', 'relu', 'sigmoid']
+    # )
+    model = create_model(
+        layers=[
+            Layer('input', Dense, 64, 'relu', input_nodes=feature_nodes),
+            Layer('hidden-1', Dense, 128, 'relu'),
+            Layer('output', Dense, result_nodes, 'sigmoid'),
+        ]
+    )
+
+    # # ryser
+    # model.add(Dense(512, input_shape=(feature_nodes,), activation='relu', name="hidden-1"))
+    # model.add(Dense(384, activation='relu', name="hidden-2"))
+    # projections TODO TEST
 
 
-    model_1 = Sequential()
 
-    # ryser
-    model_1.add(Dense(512, input_shape=(feature_nodes,), activation='relu', name="hidden-1"))
-    model_1.add(Dense(384, activation='relu', name="hidden-2"))
-    model_1.add(Dense(result_nodes, activation='relu', name="output"))
+    # def custom_loss_function(y_true, y_pred):
+    # #    squared_difference = tf.square(y_true - y_pred)
+    # #    return tf.reduce_mean(squared_difference, axis=-1)
+    #     mae = tf.keras.losses.MeanAbsoluteError()
+    #     if custom_loss_function.val == 1:
+    #         tf.print('.')
+    #         # tf.print(y_true)
+    #         # tf.print(y_pred)
+    #         custom_loss_function.val = 0
+    #     # return mae(y_true, y_pred)
+    #     return mae(y_true, tf.convert_to_tensor(y_pred.numpy().round().astype('int').astype('float32')))
+    # custom_loss_function.val = 1
+    #
+    # # model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+    # # model.compile(optimizer='adam', loss=tf.keras.losses.MeanAbsolutePercentageError, metrics=['accuracy'])
+    # # model.compile(optimizer='sgd', loss=tf.keras.losses.MeanAbsoluteError(reduction=tf.keras.losses.Reduction.SUM), metrics=['accuracy'])
+    #
+    # # model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+    # # model.compile(optimizer='adam', loss=tf.keras.losses.MeanAbsoluteError(reduction=tf.keras.losses.Reduction.SUM), metrics=['accuracy'])
+    # # model.compile(optimizer='adam', loss=tf.keras.losses.MeanAbsoluteError(), metrics=['mae'])
+    # # model.compile(optimizer='sgd', loss='mae', metrics=['mae'])
+    # # model.compile(optimizer='sgd', loss=custom_loss_function, metrics=['accuracy'], run_eagerly=True)
+    #
+    # # def extractFeatures(A):
+    # #     slbp_result = slbp(A)
+    # #     predicted_ryser = ryser_algorithm(A.reshape(image_size, image_size))
+    # #     return np.concatenate([slbp_result, predicted_ryser.reshape(image_size * image_size)]), A.reshape(result_nodes)
+    # #     # return np.concatenate([A.sum(axis=0)/normalization, A.sum(axis=1)/normalization]), A.reshape(result_nodes)
+    # #
+    # #     # train_sub_images
+    # #     # test_sub_images
+    # #     # prepared_sub_images = np.array([extractFeatures(sub_image) for sub_image in all_sub_images])
 
-    model_1.summary()
-    plot_model(model_1, show_shapes=True, show_layer_names=True)
 
-
-
-    def custom_loss_function(y_true, y_pred):
-    #    squared_difference = tf.square(y_true - y_pred)
-    #    return tf.reduce_mean(squared_difference, axis=-1)
-        mae = tf.keras.losses.MeanAbsoluteError()
-        if custom_loss_function.val == 1:
-            tf.print('.')
-            # tf.print(y_true)
-            # tf.print(y_pred)
-            custom_loss_function.val = 0
-        # return mae(y_true, y_pred)
-        return mae(y_true, tf.convert_to_tensor(y_pred.numpy().round().astype('int').astype('float32')))
-    custom_loss_function.val = 1
-
-    # model_1.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
-    # model_1.compile(optimizer='adam', loss=tf.keras.losses.MeanAbsolutePercentageError, metrics=['accuracy'])
-    # model_1.compile(optimizer='sgd', loss=tf.keras.losses.MeanAbsoluteError(reduction=tf.keras.losses.Reduction.SUM), metrics=['accuracy'])
-
-    model_1.compile(optimizer='adam', loss=tf.keras.losses.MeanAbsoluteError(reduction=tf.keras.losses.Reduction.SUM), metrics=['accuracy'])
-    # model_1.compile(optimizer='adam', loss=tf.keras.losses.MeanAbsoluteError(), metrics=['mae'])
-    # model_1.compile(optimizer='sgd', loss='mae', metrics=['mae'])
-    # model_1.compile(optimizer='sgd', loss=custom_loss_function, metrics=['accuracy'], run_eagerly=True)
-
-    def extractFeatures(A):
-        slbp_result = slbp(A)
-        predicted_ryser = ryser_algorithm(A.reshape(image_size, image_size))
-        return np.concatenate([slbp_result, predicted_ryser.reshape(image_size * image_size)]), A.reshape(result_nodes)
-        # return np.concatenate([A.sum(axis=0)/normalization, A.sum(axis=1)/normalization]), A.reshape(result_nodes)
-
-        # train_sub_images
-        # test_sub_images
-        # prepared_sub_images = np.array([extractFeatures(sub_image) for sub_image in all_sub_images])
+    def extract_features(A):
+        proj_a = A.sum(axis=0)
+        proj_b = A.sum(axis=1)
+        return np.concatenate([proj_a / np.amax(proj_a), proj_b / np.amax(proj_b)]), A.reshape(result_nodes)
 
     X_train = []
     Y_train = []
@@ -96,7 +161,7 @@ def main():
     start = timer()
     for X_train_one in train_sub_images:
         train_cnt += 1
-        X, Y = extractFeatures(X_train_one)
+        X, Y = extract_features(X_train_one)
         percentage = int(train_cnt/train_sub_images_len*100)
         if percentage == last_percentage and percentage != 0:
             last_percentage += 1
@@ -118,7 +183,7 @@ def main():
     start = timer()
     for X_test_one in test_sub_images:
         test_cnt += 1
-        X, Y = extractFeatures(X_test_one)
+        X, Y = extract_features(X_test_one)
         percentage = int(test_cnt/test_sub_images_len*100)
         if percentage == last_percentage and percentage != 0:
             last_percentage += 1
@@ -143,7 +208,7 @@ def main():
     epochs = 10
     shuffle = True
 
-    model_1.fit(
+    model.fit(
         X_train,
         Y_train,
         batch_size=batch_size,
@@ -152,19 +217,17 @@ def main():
         verbose=1
     )
 
-    score, accuracy = model_1.evaluate(X_test, Y_test)
+    score, accuracy = model.evaluate(X_test, Y_test)
     print('Test categorical_crossentropy:', score)
     print('Test accuracy:', accuracy)
 
 
-    predicts = model_1.predict(X_test)
+    predicts = model.predict(X_test)
     print(X_test.shape)
     print(predicts.shape)
-    # print(a[0].reshape(28, 28))
 
 
     image_number = 1
-    # predicted_nn = a[image_number].round().astype('int').reshape(image_size, image_size)
     predicted_nn = predicts[image_number].round().astype('int').reshape(image_size, image_size)
     predicted_ryser = ryser_algorithm(Y_test[image_number].reshape(image_size, image_size))
     original = Y_test[image_number].reshape(image_size, image_size)
@@ -205,7 +268,6 @@ def main():
         predicted_nn = predicts[i].round().astype('int').reshape(image_size, image_size)
         predicted_ryser = ryser_algorithm(Y_test[i].reshape(image_size, image_size))
 
-        plt.subplots_adjust(top=10)
         fig, axs = plt.subplots(1, 3)
         axs[0].set_title('original\n\nrme:\n pe:\n')
         axs[0].imshow(original, interpolation='none', cmap=plt.cm.binary)
@@ -216,14 +278,12 @@ def main():
         axs[2].set_title(f'Ryser\n\n{relative_mean_error(original, predicted_ryser):.2f}\n{pixel_error(original, predicted_ryser):.2f}\n')
         axs[2].imshow(predicted_ryser, interpolation='none', cmap=plt.cm.binary)
 
-        # fig.figtext(0, 0, f'rme:\n pe:')
-
-        plt.savefig(f'results/{i}.png')
+        plt.savefig(f'{result_folder}/{i}.png')
 
 
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
     # Fixing random state for reproducibility
     tf.keras.utils.set_random_seed(1)
-    main()
+    main('results')
 
