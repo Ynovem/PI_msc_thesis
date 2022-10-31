@@ -52,7 +52,7 @@ def create_model(layers):
     model.summary()
     plot_model(model, show_shapes=True, show_layer_names=True, rankdir='LR', show_layer_activations=True)
 
-    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['mae'])
 
     return model
 
@@ -64,6 +64,91 @@ def create_model(layers):
 #     model.add(Dense(hidden_nodes[2], activation=activations[2], name="output"))
 #
 #     return model
+
+
+def print_info(predicts, Y_test, result_folder):
+    # image_number = 1
+    # predicted_nn = predicts[image_number].round().astype('int').reshape(image_size, image_size)
+    # predicted_ryser = ryser_algorithm(Y_test[image_number].reshape(image_size, image_size))
+    # original = Y_test[image_number].reshape(image_size, image_size)
+    #
+    # print(f'{"="*30} ORIGINAL {"="*30}')
+    # print(original)
+    # print(f'{"="*30}    NN {"="*30}')
+    # print(predicted_nn)
+    # print(f'{"="*30}   RYSER  {"="*30}')
+    # print(predicted_ryser)
+    #
+    #
+    # original_r, original_c = calculate_projections(original)
+    #
+    # print('NN')
+    # print(f'\trme: {relative_mean_error(original, predicted_nn)}')
+    # print(f'\tp e: {pixel_error(original, predicted_nn)}')
+    # nn_r, nn_c = calculate_projections(predicted_nn)
+    # print(f'\tprojection differences:\n\t\trows: {original_r - nn_r}\n\t\tcols: {original_c - nn_c}')
+    # print(f'\teuclidean distance:\n\t\trows:{np.linalg.norm(original_r - nn_r)}\n\t\tcols:: {np.linalg.norm(original_c - nn_c)}')
+    #
+    # print('Ryser')
+    # print(f'\trme: {relative_mean_error(original, predicted_ryser)}')
+    # print(f'\tp e: {pixel_error(original, predicted_ryser)}')
+    # ryser_r, ryser_c = calculate_projections(predicted_ryser)
+    # print(f'\tprojection differences:\n\t\trows: {original_r - ryser_r}\n\t\tcols: {original_c - ryser_c}')
+    # print(f'\teuclidean distance:\n\t\trows:{np.linalg.norm(original_r - ryser_r)}\n\t\tcols:: {np.linalg.norm(original_c - ryser_c)}')
+
+    # fig, axs = plt.subplots(1, 3)
+    # axs[0].set_title('original')
+    # axs[0].imshow(original*16, interpolation='none', cmap=plt.cm.binary)
+    # axs[1].set_title('NN')
+    # axs[1].imshow(predicted_nn, interpolation='none', cmap=plt.cm.binary)
+    # axs[2].set_title('Ryser')
+    # axs[2].imshow(predicted_ryser, interpolation='none', cmap=plt.cm.binary)
+    max_picture = 10
+    for i in range(len(predicts)):
+        if max_picture == 0:
+            break
+        max_picture -= 1
+
+        original = Y_test[i].reshape(image_size, image_size)
+        predicted_nn = predicts[i].round().astype('int').reshape(image_size, image_size)
+        predicted_ryser = ryser_algorithm(Y_test[i].reshape(image_size, image_size))
+
+        fig, axs = plt.subplots(1, 3)
+        axs[0].set_title('original\n\nrme:\n pe:\n')
+        axs[0].imshow(original, interpolation='none', cmap=plt.cm.binary)
+
+        axs[1].set_title(f'NN\n\n{relative_mean_error(original, predicted_nn):.2f}\n{pixel_error(original, predicted_nn):.2f}\n')
+        axs[1].imshow(predicted_nn, interpolation='none', cmap=plt.cm.binary)
+
+        axs[2].set_title(f'Ryser\n\n{relative_mean_error(original, predicted_ryser):.2f}\n{pixel_error(original, predicted_ryser):.2f}\n')
+        axs[2].imshow(predicted_ryser, interpolation='none', cmap=plt.cm.binary)
+
+        plt.savefig(f'{result_folder}/{i}.png')
+
+    # print info
+    nn_rme = 0
+    nn_pe = 0
+    ryser_rme = 0
+    ryser_pe = 0
+
+    for i in range(len(predicts)):
+        predicted_NN = predicts[i].round().astype('int').reshape(image_size, image_size)
+        predicted_ryser = ryser_algorithm(Y_test[i].reshape(image_size, image_size))
+        original = Y_test[i].reshape(image_size, image_size)
+
+        nn_rme += relative_mean_error(original, predicted_NN)
+        nn_pe += pixel_error(original, predicted_NN)
+        ryser_rme += relative_mean_error(original, predicted_ryser)
+        ryser_pe += pixel_error(original, predicted_ryser)
+
+    avg_nn_rme = nn_rme / len(predicts)
+    avg_nn_pe = nn_pe / len(predicts)
+    avg_ryser_rme = ryser_rme / len(predicts)
+    avg_ryser_pe = ryser_pe / len(predicts)
+    print(f'          rme(%)  pe(%)')
+    print(f'   NN:    {avg_nn_rme:.2f}   {avg_nn_pe:.2f}')
+    print(f'Ryser:    {avg_ryser_rme:.2f}   {avg_ryser_pe:.2f}')
+
 
 
 def main(result_folder):
@@ -226,62 +311,10 @@ def main(result_folder):
     print(X_test.shape)
     print(predicts.shape)
 
-
-    image_number = 1
-    predicted_nn = predicts[image_number].round().astype('int').reshape(image_size, image_size)
-    predicted_ryser = ryser_algorithm(Y_test[image_number].reshape(image_size, image_size))
-    original = Y_test[image_number].reshape(image_size, image_size)
-
-    print(f'{"="*30} ORIGINAL {"="*30}')
-    print(original)
-    print(f'{"="*30}    NN {"="*30}')
-    print(predicted_nn)
-    print(f'{"="*30}   RYSER  {"="*30}')
-    print(predicted_ryser)
+    print_info(predicts, Y_test, result_folder)
 
 
-    original_r, original_c = calculate_projections(original)
 
-    print('NN')
-    print(f'\trme: {relative_mean_error(original, predicted_nn)}')
-    print(f'\tp e: {pixel_error(original, predicted_nn)}')
-    nn_r, nn_c = calculate_projections(predicted_nn)
-    print(f'\tprojection differences:\n\t\trows: {original_r - nn_r}\n\t\tcols: {original_c - nn_c}')
-    print(f'\teuclidean distance:\n\t\trows:{np.linalg.norm(original_r - nn_r)}\n\t\tcols:: {np.linalg.norm(original_c - nn_c)}')
-
-    print('Ryser')
-    print(f'\trme: {relative_mean_error(original, predicted_ryser)}')
-    print(f'\tp e: {pixel_error(original, predicted_ryser)}')
-    ryser_r, ryser_c = calculate_projections(predicted_ryser)
-    print(f'\tprojection differences:\n\t\trows: {original_r - ryser_r}\n\t\tcols: {original_c - ryser_c}')
-    print(f'\teuclidean distance:\n\t\trows:{np.linalg.norm(original_r - ryser_r)}\n\t\tcols:: {np.linalg.norm(original_c - ryser_c)}')
-
-    # fig, axs = plt.subplots(1, 3)
-    # axs[0].set_title('original')
-    # axs[0].imshow(original*16, interpolation='none', cmap=plt.cm.binary)
-    # axs[1].set_title('NN')
-    # axs[1].imshow(predicted_nn, interpolation='none', cmap=plt.cm.binary)
-    # axs[2].set_title('Ryser')
-    # axs[2].imshow(predicted_ryser, interpolation='none', cmap=plt.cm.binary)
-    for i in range(5):
-        original = Y_test[i].reshape(image_size, image_size)
-        predicted_nn = predicts[i].round().astype('int').reshape(image_size, image_size)
-        predicted_ryser = ryser_algorithm(Y_test[i].reshape(image_size, image_size))
-
-        fig, axs = plt.subplots(1, 3)
-        axs[0].set_title('original\n\nrme:\n pe:\n')
-        axs[0].imshow(original, interpolation='none', cmap=plt.cm.binary)
-
-        axs[1].set_title(f'NN\n\n{relative_mean_error(original, predicted_nn):.2f}\n{pixel_error(original, predicted_nn):.2f}\n')
-        axs[1].imshow(predicted_nn, interpolation='none', cmap=plt.cm.binary)
-
-        axs[2].set_title(f'Ryser\n\n{relative_mean_error(original, predicted_ryser):.2f}\n{pixel_error(original, predicted_ryser):.2f}\n')
-        axs[2].imshow(predicted_ryser, interpolation='none', cmap=plt.cm.binary)
-
-        plt.savefig(f'{result_folder}/{i}.png')
-
-
-# Press the green button in the gutter to run the script.
 if __name__ == '__main__':
     # Fixing random state for reproducibility
     tf.keras.utils.set_random_seed(1)
