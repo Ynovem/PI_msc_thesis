@@ -7,155 +7,22 @@ from keras.models import Sequential
 from keras.layers import Dense, Dropout, Activation
 from tensorflow.keras.optimizers import Adam
 
+import matplotlib.pyplot as plt
+# %matplotlib inline
+
 from timeit import default_timer as timer   # for verbose output
 
-from random import randint
+from helpers import *
 
-
-image_size = 32
+image_size = 16
 # desired_samples = 10000
 desired_samples = 100
-slbp_normalization = 'max'
-slbp_normalization = 'by_step'
-
-
-def relative_mean_error(original, predicted):
-    if original.shape != predicted.shape:
-        print(f'Error: shape\'s not similar: {original.shape} != {predicted.shape}')
-    return np.abs(original - predicted).sum() / original.sum() * 100
-
-
-def pixel_error(original, predicted):
-    if original.shape != predicted.shape:
-        print(f'Error: shape\'s not similar: {original.shape} != {predicted.shape}')
-    return np.abs(original - predicted).sum() / (original.shape[0] * original.shape[1]) * 100
-
-
-def calculate_projections(data):
-    return (data.sum(axis=1), data.sum(axis=0))
-
-
-def ryser_algorithm(data):
-    data = data.copy()
-
-    r, s = calculate_projections(data)
-
-    tmp = [(s[i], i) for i in range(len(s))]
-    tmp.sort()
-    s_, permutation = zip(*tmp[::-1])
-    s_ = np.asarray(s_)
-    permutation = np.asarray(permutation)
-
-    n = s_.size
-    B = np.zeros((n, n), dtype='int32')
-    for i in range(n):
-        for j in range(r[i]):
-            B[i][j] = 1
-
-    for i in range(n - 1, 0, -1):
-        sb = B.sum(axis=0)
-        if sb[i] < s_[i]:
-            diff = s_[i] - sb[i]
-            if diff == 0:
-                continue
-            for j in range(i - 1, -1, -1):
-                for k in range(n):
-                    if B[k][i] == 0 and B[k][j] == 1:
-                        diff -= 1
-                        B[k][i], B[k][j] = B[k][j], B[k][i]
-                    if diff == 0:
-                        break
-                if diff == 0:
-                    break
-    result = np.zeros((n, n), dtype='int32')
-    for i in range(len(permutation)):
-        result[:, permutation[i]] = B[:, i]
-
-    if not np.array_equal(r, result.sum(axis=1)):
-        raise Exception(f'Ryser: R is not equal in origin and result data:\n{r}\n{result.sum(axis=1)}')
-    if not np.array_equal(s, result.sum(axis=0)):
-        raise Exception(f'Ryser: S is not equal in origin and result data:\n{s}\n{result.sum(axis=0)}')
-
-    return result
-
-
-sample_points = np.array([
-    [-1, -1],
-    [-1, 0],
-    [-1, 1],
-    [0, 1],
-    [1, 1],
-    [1, 0],
-    [1, -1],
-    [0, -1],
-])
-
-
-def slbp(image, intensity_level=3):
-    r, c = image.shape
-    interval = np.arange(-intensity_level, intensity_level+1)
-    slbp_result = np.zeros([256], dtype='int32')
-    normalization_factor = 0
-
-    for i in range(1, r-1):
-        for j in range(1, c-1):
-            temp_im = np.copy(image[i-1:i+2, j-1:j+2])
-            center_point = temp_im[1][1]
-            slbp_dict = dict()
-            for k in interval:
-                slbp_str = ''
-                for sample_point in sample_points:
-                    if temp_im[1+sample_point[0]][1+sample_point[1]] >= center_point+k:
-                        slbp_str += '1'
-                    else:
-                        slbp_str += '0'
-                slbp_int = int(slbp_str[::-1], 2)
-                if slbp_int not in slbp_dict:
-                    slbp_dict[slbp_int] = 1
-                else:
-                    slbp_dict[slbp_int] += 1
-            if slbp.normalization_mode == 'by_step':
-                normalization_factor += len(interval)
-            for slbp_k, slbp_v in slbp_dict.items():
-                slbp_result[slbp_k] += slbp_v
-    if slbp.normalization_mode == 'by_step':
-        return slbp_result/normalization_factor
-    if slbp.normalization_mode == 'max':
-        return slbp_result/np.amax(slbp_result)
-    raise 'slbp-error'
-
-
-slbp.normalization_mode = slbp_normalization
-
-# sample = np.array([
-#     [200,   0, 255],
-#     [ 83, 132, 156],
-#     [132,  10, 130],
-# ])
-# # 200    0  255
-# #  83  132  156
-# # 132   10  130
-# res = slbp(sample)
-# print(f'result: {res}')
 
 
 def main():
     image = Image.open('images/phantom_class_02.png')
     image.load()
     raw_image = np.asarray(image, dtype='int32')
-
-    raw_cols, raw_rows = raw_image.shape
-
-    def get_random_sub_image(image, size, cnt):
-        row_max = raw_rows - size - 1
-        col_max = raw_cols - size - 1
-        for i in range(cnt):
-            r = randint(0, row_max)
-            c = randint(0, col_max)
-            s = raw_image[c:c + size, r:r + size]
-            if s.shape != (size, size):
-                raise (f'error [{size}]: {r}, {c}, {r + size}, {c + size}')
-            yield s
 
     # for sub_image in get_random_sub_image(raw_image, image_size, desired_samples):
     #     all_sub_images.append(sub_image)
@@ -213,13 +80,12 @@ def main():
     def extractFeatures(A):
         slbp_result = slbp(A)
         predicted_ryser = ryser_algorithm(A.reshape(image_size, image_size))
-        return np.concatenate([slbp_result, predicted_ryser.reshape(image_size*image_size)]), A.reshape(result_nodes)
+        return np.concatenate([slbp_result, predicted_ryser.reshape(image_size * image_size)]), A.reshape(result_nodes)
         # return np.concatenate([A.sum(axis=0)/normalization, A.sum(axis=1)/normalization]), A.reshape(result_nodes)
 
         # train_sub_images
         # test_sub_images
         # prepared_sub_images = np.array([extractFeatures(sub_image) for sub_image in all_sub_images])
-
 
     X_train = []
     Y_train = []
@@ -297,20 +163,16 @@ def main():
     # print(a[0].reshape(28, 28))
 
 
-    # TODO: move to import section
-    import matplotlib.pyplot as plt
-    # %matplotlib inline
-
     image_number = 1
-    # predicted_NN = a[image_number].round().astype('int').reshape(image_size, image_size)
-    predicted_NN = predicts[image_number].round().astype('int').reshape(image_size, image_size)
+    # predicted_nn = a[image_number].round().astype('int').reshape(image_size, image_size)
+    predicted_nn = predicts[image_number].round().astype('int').reshape(image_size, image_size)
     predicted_ryser = ryser_algorithm(Y_test[image_number].reshape(image_size, image_size))
     original = Y_test[image_number].reshape(image_size, image_size)
 
     print(f'{"="*30} ORIGINAL {"="*30}')
     print(original)
     print(f'{"="*30}    NN {"="*30}')
-    print(predicted_NN)
+    print(predicted_nn)
     print(f'{"="*30}   RYSER  {"="*30}')
     print(predicted_ryser)
 
@@ -318,9 +180,9 @@ def main():
     original_r, original_c = calculate_projections(original)
 
     print('NN')
-    print(f'\trme: {relative_mean_error(original, predicted_NN)}')
-    print(f'\tp e: {pixel_error(original, predicted_NN)}')
-    nn_r, nn_c = calculate_projections(predicted_NN)
+    print(f'\trme: {relative_mean_error(original, predicted_nn)}')
+    print(f'\tp e: {pixel_error(original, predicted_nn)}')
+    nn_r, nn_c = calculate_projections(predicted_nn)
     print(f'\tprojection differences:\n\t\trows: {original_r - nn_r}\n\t\tcols: {original_c - nn_c}')
     print(f'\teuclidean distance:\n\t\trows:{np.linalg.norm(original_r - nn_r)}\n\t\tcols:: {np.linalg.norm(original_c - nn_c)}')
 
@@ -335,25 +197,33 @@ def main():
     # axs[0].set_title('original')
     # axs[0].imshow(original*16, interpolation='none', cmap=plt.cm.binary)
     # axs[1].set_title('NN')
-    # axs[1].imshow(predicted_NN, interpolation='none', cmap=plt.cm.binary)
+    # axs[1].imshow(predicted_nn, interpolation='none', cmap=plt.cm.binary)
     # axs[2].set_title('Ryser')
     # axs[2].imshow(predicted_ryser, interpolation='none', cmap=plt.cm.binary)
     for i in range(5):
-        predicted_NN = predicts[i].round().astype('int').reshape(image_size, image_size)
-        predicted_ryser = ryser_algorithm(Y_test[i].reshape(image_size, image_size))
         original = Y_test[i].reshape(image_size, image_size)
+        predicted_nn = predicts[i].round().astype('int').reshape(image_size, image_size)
+        predicted_ryser = ryser_algorithm(Y_test[i].reshape(image_size, image_size))
 
+        plt.subplots_adjust(top=10)
         fig, axs = plt.subplots(1, 3)
-        axs[0].set_title('original')
-        axs[0].imshow(original * 16, interpolation='none', cmap=plt.cm.binary)
-        axs[1].set_title('NN')
-        axs[1].imshow(predicted_NN, interpolation='none', cmap=plt.cm.binary)
-        axs[2].set_title('Ryser')
+        axs[0].set_title('original\n\nrme:\n pe:\n')
+        axs[0].imshow(original, interpolation='none', cmap=plt.cm.binary)
+
+        axs[1].set_title(f'NN\n\n{relative_mean_error(original, predicted_nn):.2f}\n{pixel_error(original, predicted_nn):.2f}\n')
+        axs[1].imshow(predicted_nn, interpolation='none', cmap=plt.cm.binary)
+
+        axs[2].set_title(f'Ryser\n\n{relative_mean_error(original, predicted_ryser):.2f}\n{pixel_error(original, predicted_ryser):.2f}\n')
         axs[2].imshow(predicted_ryser, interpolation='none', cmap=plt.cm.binary)
+
+        # fig.figtext(0, 0, f'rme:\n pe:')
+
         plt.savefig(f'results/{i}.png')
 
 
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
+    # Fixing random state for reproducibility
+    tf.keras.utils.set_random_seed(1)
     main()
 
