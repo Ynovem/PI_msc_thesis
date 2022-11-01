@@ -1,8 +1,18 @@
 import os
 import shutil
+import logging
+import warnings
+import csv
 
 import numpy as np
 from PIL import Image
+
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+# In details,
+# 0 = all messages are logged (default behavior)
+# 1 = INFO messages are not printed
+# 2 = INFO and WARNING messages are not printed
+# 3 = INFO, WARNING, and ERROR messages are not printed
 
 from keras.utils.vis_utils import plot_model    # a modell vizualizációjához
 import tensorflow as tf
@@ -17,8 +27,8 @@ from timeit import default_timer as timer   # for verbose output
 
 from helpers import *
 
-image_size = 32
-desired_samples = 1000
+
+INFO_LEVEL = 0
 
 
 class Layer:
@@ -51,7 +61,8 @@ def create_model(layers, model_path):
     for layer in layers:
         model.add(layer.create())
 
-    model.summary()
+    if INFO_LEVEL >= 1:
+        model.summary()
     plot_model(
         model,
         show_shapes=True,
@@ -76,7 +87,7 @@ def create_model(layers, model_path):
 #     return model
 
 
-def print_info(predicts, Y_test, result_folder, input_sblp, input_ryser):
+def print_info(predicts, Y_test, result_folder, desired_samples, image_size, input_sblp, input_ryser):
     max_picture = 10
     for i in range(len(predicts)):
         if max_picture == 0:
@@ -98,6 +109,7 @@ def print_info(predicts, Y_test, result_folder, input_sblp, input_ryser):
         axs[2].imshow(predicted_ryser, interpolation='none', cmap=plt.cm.binary)
 
         plt.savefig(f'{result_folder}/{i}.png')
+        plt.close(fig)
 
     results = {
         'ryser': {
@@ -141,32 +153,43 @@ def print_info(predicts, Y_test, result_folder, input_sblp, input_ryser):
         f.write(f'    * std      {np.std(results["ryser"]["pe"]):>7.2f} %    {np.std(results["nn"]["pe"]):>7.2f} %\n')
         f.write(f'    * median   {np.median(results["ryser"]["pe"]):>7.2f} %    {np.median(results["nn"]["pe"]):>7.2f} %\n')
         f.write(f'\n')
+    return {
+        'ryser': {
+            'min': round(float(np.min(results["ryser"]["rme"])), 2),
+            'max': round(float(np.max(results["ryser"]["rme"])), 2),
+            'avg': round(float(np.mean(results["ryser"]["rme"])), 2),
+            'std': round(float(np.std(results["ryser"]["rme"])), 2),
+        },
+        'nn': {
+            'min': round(float(np.min(results["nn"]["rme"])), 2),
+            'max': round(float(np.max(results["nn"]["rme"])), 2),
+            'avg': round(float(np.mean(results["nn"]["rme"])), 2),
+            'std': round(float(np.std(results["nn"]["rme"])), 2),
+        }
+    }
 
 
-def main(result_folder_prefix, input_sblp, input_ryser):
-    result_folder = result_folder_prefix
-    if input_sblp:
-        result_folder += '-sblp'
-    if input_ryser:
-        result_folder += '-ryser'
-    result_folder += f'-{image_size}x{image_size}'
-    result_folder += f'-{desired_samples}PCS'
-    os.mkdir(result_folder)
+def main(result_folder, image_path, image_size, desired_samples, input_sblp, input_ryser):
+    os.makedirs(result_folder)
 
-    image = Image.open('images/phantom_class_02.png')
+    # image = Image.open('images/phantom_class_02.png')
+    # image = Image.open('images/real_9.png')
+    image = Image.open(image_path)
     image.load()
     raw_image = np.asarray(image, dtype='int32')
 
     # for sub_image in get_random_sub_image(raw_image, image_size, desired_samples):
     #     all_sub_images.append(sub_image)
     all_sub_images = np.array([sub_image for sub_image in get_random_sub_image(raw_image, image_size, desired_samples)])
-    print(len(all_sub_images))
+    if INFO_LEVEL >= 1:
+        print(len(all_sub_images))
 
     pareto_limit = 0.8
 
     train_sub_images, test_sub_images = np.split(all_sub_images, [int(all_sub_images.shape[0] * pareto_limit)])
-    print(f'Train set: {train_sub_images.shape}')
-    print(f'Test set: {test_sub_images.shape}')
+    if INFO_LEVEL >= 1:
+        print(f'Train set: {train_sub_images.shape}')
+        print(f'Test set: {test_sub_images.shape}')
 
     feature_nodes = image_size + image_size
     if input_sblp:
@@ -176,10 +199,24 @@ def main(result_folder_prefix, input_sblp, input_ryser):
 
     result_nodes = image_size * image_size
 
+    lh = int((result_nodes-feature_nodes)/2)
+    l1 = int(feature_nodes+lh)
+    l2 = int(l1+lh)
+    if INFO_LEVEL >= 1:
+        print(f'{feature_nodes} > {l1} > {l2} > {result_nodes}\n{lh}')
     model = create_model(
         layers=[
-            Layer('input', Dense, 272, 'relu', input_nodes=feature_nodes),
-            Layer('hidden-1', Dense, 256, 'relu'),
+            # 64x64
+            Layer('input', Dense, l1, 'relu', input_nodes=feature_nodes),
+            Layer('hidden-1', Dense, l2, 'relu'),
+
+            # # 128x128
+            # Layer('input', Dense, 8448, 'relu', input_nodes=feature_nodes),
+            # Layer('hidden-1', Dense, 16384, 'relu'),
+
+            # Layer('input', Dense, 672, 'relu', input_nodes=feature_nodes),
+            # Layer('hidden-1', Dense, 1024, 'relu'),
+
             # Layer('input', Dense, 512, 'relu', input_nodes=feature_nodes),
             # Layer('hidden-1', Dense, 2048, 'relu'),
             Layer('output', Dense, result_nodes, 'sigmoid'),
@@ -205,7 +242,8 @@ def main(result_folder_prefix, input_sblp, input_ryser):
     Y_train = []
     train_cnt = 0
     train_sub_images_len = len(train_sub_images)
-    print(f'train set calculation [{train_sub_images_len}]')
+    if INFO_LEVEL >= 1:
+        print(f'train set calculation [{train_sub_images_len}]')
     last_percentage = 1
     start = timer()
     for X_train_one in train_sub_images:
@@ -215,7 +253,8 @@ def main(result_folder_prefix, input_sblp, input_ryser):
         if percentage == last_percentage and percentage != 0:
             last_percentage += 1
             end = timer()
-            print(f'\t{percentage}% \t {train_cnt} from {train_sub_images_len} in {end-start} s')
+            if INFO_LEVEL >= 1:
+                print(f'\t{percentage}% \t {train_cnt} from {train_sub_images_len} in {end-start} s')
             start = timer()
         X_train.append(X)
         Y_train.append(Y)
@@ -227,7 +266,8 @@ def main(result_folder_prefix, input_sblp, input_ryser):
     Y_test = []
     test_cnt = 0
     test_sub_images_len = len(test_sub_images)
-    print(f'test set calculation [{test_sub_images_len}]')
+    if INFO_LEVEL >= 1:
+        print(f'test set calculation [{test_sub_images_len}]')
     last_percentage = 1
     start = timer()
     for X_test_one in test_sub_images:
@@ -237,7 +277,8 @@ def main(result_folder_prefix, input_sblp, input_ryser):
         if percentage == last_percentage and percentage != 0:
             last_percentage += 1
             end = timer()
-            print(f'\t{percentage}% \t {test_cnt} from {test_sub_images_len} in {end-start} s')
+            if INFO_LEVEL >= 1:
+                print(f'\t{percentage}% \t {test_cnt} from {test_sub_images_len} in {end-start} s')
             start = timer()
         X_test.append(X)
         Y_test.append(Y)
@@ -253,31 +294,61 @@ def main(result_folder_prefix, input_sblp, input_ryser):
 
 
     # Note: lower batch_size help to the training depending on the training-set size
-    batch_size = 16
+    batch_size = int(desired_samples/16)
     epochs = 10
     shuffle = True
-
-    model.fit(
+    verbose = INFO_LEVEL >= 1
+    history = model.fit(
         X_train,
         Y_train,
         batch_size=batch_size,
         epochs=epochs,
         shuffle=shuffle,
-        verbose=1
+        verbose=0,
+        validation_split=1-pareto_limit
     )
 
+    # list all data in history
+    if INFO_LEVEL >= 1:
+        print(history.history.keys())
+    # summarize history for mae
+    fig, ax = plt.subplots(nrows=1, ncols=1)  # create figure & 1 axis
+    ax.plot(history.history['mae'])
+    ax.plot(history.history['val_mae'])
+    ax.set_title('model mae')
+    ax.set_ylabel('mae')
+    ax.set_xlabel('epoch')
+    ax.legend(['train', 'test'], loc='upper left')
+    fig.savefig(f'{result_folder}/mae.png')  # save the figure to file
+    plt.close(fig)  # close the figure window
+
+    # summarize history for loss
+    fig, ax = plt.subplots(nrows=1, ncols=1)  # create figure & 1 axis
+    ax.plot(history.history['loss'])
+    ax.plot(history.history['val_loss'])
+    ax.set_title('model loss')
+    ax.set_ylabel('loss')
+    ax.set_xlabel('epoch')
+    ax.legend(['train', 'test'], loc='upper left')
+    fig.savefig(f'{result_folder}/loss.png')  # save the figure to file
+    plt.close(fig)  # close the figure window
+
     score, accuracy = model.evaluate(X_test, Y_test)
-    print('Test categorical_crossentropy:', score)
-    print('Test accuracy:', accuracy)
+    if INFO_LEVEL >= 1:
+        print('Test categorical_crossentropy:', score)
+        print('Test accuracy:', accuracy)
 
 
     predicts = model.predict(X_test)
-    print(X_test.shape)
-    print(predicts.shape)
+    if INFO_LEVEL >= 1:
+        print(X_test.shape)
+        print(predicts.shape)
 
-    print_info(
+    return print_info(
         predicts=predicts,
         Y_test=Y_test,
+        image_size=image_size,
+        desired_samples=desired_samples,
         result_folder=result_folder,
         input_sblp=input_sblp, input_ryser=input_ryser
     )
@@ -285,10 +356,124 @@ def main(result_folder_prefix, input_sblp, input_ryser):
 
 
 if __name__ == '__main__':
-    # Fixing random state for reproducibility
-    tf.keras.utils.set_random_seed(1)
-    main(
-        result_folder_prefix='results',
-        input_sblp=True,
-        input_ryser=False
-    )
+    # tf.logging.set_verbosity(tf.logging.ERROR)
+    logging.getLogger('matplotlib').setLevel(level=logging.CRITICAL)
+    logging.getLogger('tensorflow').setLevel(level=logging.CRITICAL)
+    warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+    images = {
+        'phan': 'images/phantom_class_02.png',
+        'brod': 'images/Brodatz_resized_04.png',
+        'real': 'images/real_9.png',
+    }
+    size_params = [
+        (16, 1000),
+        (32, 1000),
+        (64, 1000),
+
+        (16, 2000),
+        (32, 2000),
+        (64, 2000),
+    ]
+    additional_features = [
+        [],
+        ['sblp'],
+        ['ryser'],
+        ['sblp', 'ryser'],
+    ]
+    result_folder_prefix = 'results/long-running-3'
+    os.makedirs(result_folder_prefix, exist_ok=True)
+    csv_file = open(f'{result_folder_prefix}/summary.csv', 'w')
+    csv_writer = csv.writer(csv_file)
+    csv_writer.writerow([
+        "seed",
+        "image_name",
+        "size",
+        "samples",
+        "sblp_enabled",
+        "ryser_enabled",
+        "RS_min (%)",
+        "RS_max (%)",
+        "RS_avg (%)",
+        "RS_std (%)",
+        "NN_min (%)",
+        "NN_max (%)",
+        "NN_avg (%)",
+        "NN_std (%)",
+        "time (s)",
+    ])
+
+    for size_param in size_params:
+        (size, desired_samples) = size_param
+        # samples = int(250 * (size * size) / (8 * 8))
+        print(f'{size:>02}x{size:>02}\t{desired_samples} pcs')
+        start_per_size_param = timer()
+        for image_name in images:
+            print(f'\t{image_name}')
+            start_per_image = timer()
+            for additional_feature in additional_features:
+                print(f'\t\tadditional features: {" + ".join(additional_feature)}')
+
+                enable_sblp = 'sblp' in additional_feature
+                enable_ryser = 'ryser' in additional_feature
+                # Fixing random state for reproducibility
+                tf.keras.utils.set_random_seed(1)
+                # if True:
+                result_folder = f'{result_folder_prefix}/{image_name}-{size}x{size}-{desired_samples}pcs'
+                if enable_sblp:
+                    result_folder += '-sblp'
+                if enable_ryser:
+                    result_folder += '-ryser'
+
+                try:
+                # if True:
+                    start = timer()
+                    res = main(
+                        result_folder=result_folder,
+                        image_path=images[image_name],
+                        image_size=size,
+                        desired_samples=desired_samples,
+                        input_sblp=enable_sblp,
+                        input_ryser=enable_ryser,
+                    )
+                    end = timer()
+                    print(
+                        f'\t\t\tRS: '
+                        f'min: {res["ryser"]["min"]:>7.2f} % '
+                        f'max: {res["ryser"]["max"]:>7.2f} % '
+                        f'avg: {res["ryser"]["avg"]:>7.2f} % '
+                        f'std: {res["ryser"]["std"]:>7.2f} % '
+                    )
+                    print(
+                        f'\t\t\tNN: '
+                        f'min: {res["nn"]["min"]:>7.2f} % '
+                        f'max: {res["nn"]["max"]:>7.2f} % '
+                        f'avg: {res["nn"]["avg"]:>7.2f} % '
+                        f'std: {res["nn"]["std"]:>7.2f} % '
+                    )
+                    print(f'\t\t\tTime: {end-start:.2f} s\n\n')
+                    csv_writer.writerow([
+                        1,
+                        os.path.basename(images[image_name]),
+                        size,
+                        desired_samples,
+                        enable_sblp,
+                        enable_ryser,
+                        res["ryser"]["min"]/100,
+                        res["ryser"]["max"]/100,
+                        res["ryser"]["avg"]/100,
+                        res["ryser"]["std"]/100,
+                        res["nn"]["min"]/100,
+                        res["nn"]["max"]/100,
+                        res["nn"]["avg"]/100,
+                        res["nn"]["std"]/100,
+                        f'{end - start:.2f}',
+                    ])
+                except Exception:
+                    print('some error')
+            end_per_image = timer()
+            print(f'\t\t\t[PER IMAGE]\n\t\t\tTime: {end_per_image-start_per_image:.2f} s\n\n')
+        end_per_size_param = timer()
+        print(f'\t\t\t[PER SIZE-PARAM]\n\t\t\tTime: {end_per_size_param-start_per_size_param:.2f} s\n\n')
+
+    csv_file.close()
