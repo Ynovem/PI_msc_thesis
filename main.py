@@ -28,16 +28,17 @@ from timeit import default_timer as timer   # for verbose output
 from helpers import *
 
 
-INFO_LEVEL = 0
+INFO_LEVEL = 1
 
 
 class Layer:
-    def __init__(self, name, layer_ctor, nodes, activation, input_nodes=0):
+    def __init__(self, name, layer_ctor, nodes, activation, input_nodes=0, dropout_rate=None):
         self.layer_ctor = layer_ctor
         self.nodes = nodes
         self.activation = activation
         self.name = name
         self.input_nodes = input_nodes
+        self.dropout_rate = dropout_rate
 
     def create(self):
         if self.input_nodes:
@@ -54,12 +55,22 @@ class Layer:
                 name=self.name
             )
 
+    def need_dropout(self):
+        return self.dropout_rate is not None
+
+    def create_dropout(self, postfix):
+        return Dropout(rate=self.dropout_rate, name=f'{self.name}-dropout-{postfix}')
+
 
 def create_model(layers, model_path):
     model = Sequential()
 
     for layer in layers:
+        if layer.need_dropout():
+            model.add(layer.create_dropout(1))
         model.add(layer.create())
+        if layer.need_dropout():
+            model.add(layer.create_dropout(2))
 
     if INFO_LEVEL >= 1:
         model.summary()
@@ -73,7 +84,7 @@ def create_model(layers, model_path):
         to_file=model_path
     )
 
-    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['mae'])
+    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy', 'mae'])
 
     return model
 
@@ -169,7 +180,7 @@ def print_info(predicts, Y_test, result_folder, desired_samples, image_size, inp
     }
 
 
-def main(result_folder, image_path, image_size, desired_samples, input_sblp, input_ryser):
+def main(result_folder, image_path, image_size, desired_samples, input_sblp, input_ryser, dropout_rate):
     os.makedirs(result_folder)
 
     # image = Image.open('images/phantom_class_02.png')
@@ -208,7 +219,7 @@ def main(result_folder, image_path, image_size, desired_samples, input_sblp, inp
         layers=[
             # 64x64
             Layer('input', Dense, l1, 'relu', input_nodes=feature_nodes),
-            Layer('hidden-1', Dense, l2, 'relu'),
+            Layer('hidden-1', Dense, l2, 'relu', dropout_rate=dropout_rate),
 
             # # 128x128
             # Layer('input', Dense, 8448, 'relu', input_nodes=feature_nodes),
@@ -294,8 +305,9 @@ def main(result_folder, image_path, image_size, desired_samples, input_sblp, inp
 
 
     # Note: lower batch_size help to the training depending on the training-set size
-    batch_size = int(desired_samples/16)
-    epochs = 10
+    # batch_size = int(desired_samples/64)
+    batch_size = 128
+    epochs = 50
     shuffle = True
     verbose = INFO_LEVEL >= 1
     history = model.fit(
@@ -304,7 +316,7 @@ def main(result_folder, image_path, image_size, desired_samples, input_sblp, inp
         batch_size=batch_size,
         epochs=epochs,
         shuffle=shuffle,
-        verbose=0,
+        verbose=verbose,
         validation_split=1-pareto_limit
     )
 
@@ -331,6 +343,17 @@ def main(result_folder, image_path, image_size, desired_samples, input_sblp, inp
     ax.set_xlabel('epoch')
     ax.legend(['train', 'test'], loc='upper left')
     fig.savefig(f'{result_folder}/loss.png')  # save the figure to file
+    plt.close(fig)  # close the figure window
+
+    # summarize history for accuracy
+    fig, ax = plt.subplots(nrows=1, ncols=1)  # create figure & 1 axis
+    ax.plot(history.history['accuracy'])
+    ax.plot(history.history['val_accuracy'])
+    ax.set_title('model accuracy')
+    ax.set_ylabel('accuracy')
+    ax.set_xlabel('epoch')
+    ax.legend(['train', 'test'], loc='upper left')
+    fig.savefig(f'{result_folder}/accuracy.png')  # save the figure to file
     plt.close(fig)  # close the figure window
 
     score, accuracy = model.evaluate(X_test, Y_test)
@@ -363,25 +386,24 @@ if __name__ == '__main__':
 
     images = {
         'phan': 'images/phantom_class_02.png',
-        'brod': 'images/Brodatz_resized_04.png',
-        'real': 'images/real_9.png',
+        # 'brod': 'images/Brodatz_resized_04.png',
+        # 'real': 'images/real_9.png',
     }
     size_params = [
-        (16, 1000),
-        (32, 1000),
-        (64, 1000),
-
-        (16, 2000),
-        (32, 2000),
-        (64, 2000),
+        # (32, 10000, 0.8),
+        (32, 10000, None),
+        # (128, 2000),
+        # (128, 4000),
+        # (128, 8000),
+        # (128, 16000),
     ]
     additional_features = [
         [],
-        ['sblp'],
-        ['ryser'],
-        ['sblp', 'ryser'],
+        # ['sblp'],
+        # ['ryser'],
+        # ['sblp', 'ryser'],
     ]
-    result_folder_prefix = 'results/long-running-3'
+    result_folder_prefix = 'results/long-running-tmp8'
     os.makedirs(result_folder_prefix, exist_ok=True)
     csv_file = open(f'{result_folder_prefix}/summary.csv', 'w')
     csv_writer = csv.writer(csv_file)
@@ -404,7 +426,7 @@ if __name__ == '__main__':
     ])
 
     for size_param in size_params:
-        (size, desired_samples) = size_param
+        (size, desired_samples, dropout_rate) = size_param
         # samples = int(250 * (size * size) / (8 * 8))
         print(f'{size:>02}x{size:>02}\t{desired_samples} pcs')
         start_per_size_param = timer()
@@ -417,7 +439,7 @@ if __name__ == '__main__':
                 enable_sblp = 'sblp' in additional_feature
                 enable_ryser = 'ryser' in additional_feature
                 # Fixing random state for reproducibility
-                tf.keras.utils.set_random_seed(1)
+                tf.keras.utils.set_random_seed(435242)
                 # if True:
                 result_folder = f'{result_folder_prefix}/{image_name}-{size}x{size}-{desired_samples}pcs'
                 if enable_sblp:
@@ -425,6 +447,8 @@ if __name__ == '__main__':
                 if enable_ryser:
                     result_folder += '-ryser'
 
+                if dropout_rate is not None:
+                    result_folder += '-dropout'
                 try:
                 # if True:
                     start = timer()
@@ -435,6 +459,7 @@ if __name__ == '__main__':
                         desired_samples=desired_samples,
                         input_sblp=enable_sblp,
                         input_ryser=enable_ryser,
+                        dropout_rate=dropout_rate,
                     )
                     end = timer()
                     print(
