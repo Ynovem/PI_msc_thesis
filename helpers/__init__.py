@@ -122,7 +122,7 @@ slbp.sample_points = np.array([
 # print(f'result: {res}')
 
 
-def get_random_sub_image(image, size, cnt):
+def get_random_sub_images(image, size, cnt):
     raw_cols, raw_rows = image.shape
 
     row_max = raw_rows - size - 1
@@ -134,4 +134,15 @@ def get_random_sub_image(image, size, cnt):
         if s.shape != (size, size):
             raise (f'error [{size}]: {r}, {c}, {r + size}, {c + size}')
         yield s
+
+
+def get_random_sub_image(image, size):
+    raw_cols, raw_rows = image.shape
+
+    r = randint(0, raw_rows - size - 1)
+    c = randint(0, raw_cols - size - 1)
+    s = image[c:c + size, r:r + size]
+    if s.shape != (size, size):
+        raise (f'error [{size}]: {r}, {c}, {r + size}, {c + size}')
+    return s
 

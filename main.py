@@ -17,8 +17,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 from keras.utils.vis_utils import plot_model    # a modell vizualizációjához
 import tensorflow as tf
 from keras.models import Sequential
-from keras.layers import Dense, Dropout, Activation
-from tensorflow.keras.optimizers import Adam
+from keras.layers import Dense, Dropout, Activation, BatchNormalization
 
 import matplotlib.pyplot as plt
 # %matplotlib inline # for jupyter-notebook
@@ -28,7 +27,7 @@ from timeit import default_timer as timer   # for verbose output
 from helpers import *
 
 
-INFO_LEVEL = 1
+INFO_LEVEL = 0
 
 
 class Layer:
@@ -62,7 +61,7 @@ class Layer:
         return Dropout(rate=self.dropout_rate, name=f'{self.name}-dropout-{postfix}')
 
 
-def create_model(layers, model_path):
+def create_model(layers, model_path, optimizer):
     model = Sequential()
 
     for layer in layers:
@@ -84,7 +83,13 @@ def create_model(layers, model_path):
         to_file=model_path
     )
 
-    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy', 'mae'])
+    # learning_rate:
+    # 0.1 - 0.0001
+    # amíg a test a train alatt v an addig lehet nővelni a complexitást
+    # dropout -> továbbtanítás
+    # linear activation function???
+    # early stopping 500 epoch-ról megnézni, ahol nem történik érdemi változás
+    model.compile(optimizer=optimizer, loss='binary_crossentropy', metrics=['accuracy', 'mae'])
 
     return model
 
@@ -100,14 +105,15 @@ def create_model(layers, model_path):
 
 def print_info(predicts, Y_test, result_folder, desired_samples, image_size, input_sblp, input_ryser):
     max_picture = 10
+    image_invert_helper = np.full((image_size, image_size), -1, dtype=int)
     for i in range(len(predicts)):
         if max_picture == 0:
             break
         max_picture -= 1
 
-        original = Y_test[i].reshape(image_size, image_size)
-        predicted_nn = predicts[i].round().astype('int').reshape(image_size, image_size)
-        predicted_ryser = ryser_algorithm(Y_test[i].reshape(image_size, image_size))
+        original = np.subtract(image_invert_helper, Y_test[i].reshape(image_size, image_size))
+        predicted_nn = np.subtract(image_invert_helper, predicts[i].round().astype('int').reshape(image_size, image_size))
+        predicted_ryser = np.subtract(image_invert_helper, ryser_algorithm(Y_test[i].reshape(image_size, image_size)))
 
         fig, axs = plt.subplots(1, 3)
         axs[0].set_title('original\n\nrme:\n pe:\n')
@@ -180,27 +186,33 @@ def print_info(predicts, Y_test, result_folder, desired_samples, image_size, inp
     }
 
 
-def main(result_folder, image_path, image_size, desired_samples, input_sblp, input_ryser, dropout_rate):
+train_sub_images = None
+test_sub_images = None
+
+
+def main(result_folder, image_path, image_size, desired_samples, input_sblp, input_ryser, dropout_rate, optimizer, activation_function):
     os.makedirs(result_folder)
-
-    # image = Image.open('images/phantom_class_02.png')
-    # image = Image.open('images/real_9.png')
-    image = Image.open(image_path)
-    image.load()
-    raw_image = np.asarray(image, dtype='int32')
-
-    # for sub_image in get_random_sub_image(raw_image, image_size, desired_samples):
-    #     all_sub_images.append(sub_image)
-    all_sub_images = np.array([sub_image for sub_image in get_random_sub_image(raw_image, image_size, desired_samples)])
-    if INFO_LEVEL >= 1:
-        print(len(all_sub_images))
+    global train_sub_images
+    global test_sub_images
 
     pareto_limit = 0.8
+    if train_sub_images is None and test_sub_images is None:
+        # image = Image.open('images/phantom_class_02.png')
+        # image = Image.open('images/real_9.png')
+        image = Image.open(image_path)
+        image.load()
+        raw_image = np.asarray(image, dtype='int32')
 
-    train_sub_images, test_sub_images = np.split(all_sub_images, [int(all_sub_images.shape[0] * pareto_limit)])
-    if INFO_LEVEL >= 1:
-        print(f'Train set: {train_sub_images.shape}')
-        print(f'Test set: {test_sub_images.shape}')
+        # for sub_image in get_random_sub_image(raw_image, image_size, desired_samples):
+        #     all_sub_images.append(sub_image)
+        all_sub_images = np.array([sub_image for sub_image in get_random_sub_images(raw_image, image_size, desired_samples)])
+        if INFO_LEVEL >= 1:
+            print(len(all_sub_images))
+
+        train_sub_images, test_sub_images = np.split(all_sub_images, [int(all_sub_images.shape[0] * pareto_limit)])
+        if INFO_LEVEL >= 1:
+            print(f'Train set: {train_sub_images.shape}')
+            print(f'Test set: {test_sub_images.shape}')
 
     feature_nodes = image_size + image_size
     if input_sblp:
@@ -218,8 +230,10 @@ def main(result_folder, image_path, image_size, desired_samples, input_sblp, inp
     model = create_model(
         layers=[
             # 64x64
-            Layer('input', Dense, l1, 'relu', input_nodes=feature_nodes),
-            Layer('hidden-1', Dense, l2, 'relu', dropout_rate=dropout_rate),
+            Layer('input', Dense, l1, activation_function, input_nodes=feature_nodes),
+            Layer('hidden-1', Dense, l2, activation_function, dropout_rate=dropout_rate),
+            Layer('hidden-2', Dense, l2, activation_function, dropout_rate=dropout_rate),
+            Layer('hidden-3', Dense, l2, activation_function, dropout_rate=dropout_rate),
 
             # # 128x128
             # Layer('input', Dense, 8448, 'relu', input_nodes=feature_nodes),
@@ -233,6 +247,7 @@ def main(result_folder, image_path, image_size, desired_samples, input_sblp, inp
             Layer('output', Dense, result_nodes, 'sigmoid'),
         ],
         model_path=f'{result_folder}/model.png',
+        optimizer=optimizer,
     )
 
     def extract_features(A):
@@ -306,8 +321,8 @@ def main(result_folder, image_path, image_size, desired_samples, input_sblp, inp
 
     # Note: lower batch_size help to the training depending on the training-set size
     # batch_size = int(desired_samples/64)
-    batch_size = 128
-    epochs = 50
+    batch_size = 64
+    epochs = 500
     shuffle = True
     verbose = INFO_LEVEL >= 1
     history = model.fit(
@@ -356,7 +371,7 @@ def main(result_folder, image_path, image_size, desired_samples, input_sblp, inp
     fig.savefig(f'{result_folder}/accuracy.png')  # save the figure to file
     plt.close(fig)  # close the figure window
 
-    score, accuracy = model.evaluate(X_test, Y_test)
+    score, accuracy, mae = model.evaluate(X_test, Y_test)
     if INFO_LEVEL >= 1:
         print('Test categorical_crossentropy:', score)
         print('Test accuracy:', accuracy)
@@ -377,7 +392,6 @@ def main(result_folder, image_path, image_size, desired_samples, input_sblp, inp
     )
 
 
-
 if __name__ == '__main__':
     # tf.logging.set_verbosity(tf.logging.ERROR)
     logging.getLogger('matplotlib').setLevel(level=logging.CRITICAL)
@@ -391,19 +405,49 @@ if __name__ == '__main__':
     }
     size_params = [
         # (32, 10000, 0.8),
-        (32, 10000, None),
-        # (128, 2000),
-        # (128, 4000),
-        # (128, 8000),
-        # (128, 16000),
+        # (16, 10000, 0.1),
+        # (16, 10000, 0.2),
+        # (16, 10000, 0.3),
+        # (16, 10000, 0.4),
+        # (16, 10000, 0.5),
     ]
+    for optim in ['sgd', 'adam']:
+        for extent in [0.1000, 0.0100, 0.0010, 0.0001]:
+            for acti in ['linear', 'relu', 'sigmoid']:
+                coptim = None
+                if optim == 'sgd':
+                    coptim = tf.keras.optimizers.SGD(extent)
+                if optim == 'adam':
+                    coptim = tf.keras.optimizers.Adam(extent)
+                size_params.append((16, 5000, None, coptim, optim, extent, acti))
+        # (16, 1000, None, tf.keras.optimizers.SGD(0.1), 'sgd', '0.1', 'relu'),
+        # (16, 1000, None, tf.keras.optimizers.SGD(0.01), 'sgd', '0.01', 'relu'),
+        # (16, 1000, None, tf.keras.optimizers.SGD(0.001), 'sgd', '0.001', 'relu'),
+        # (16, 1000, None, tf.keras.optimizers.SGD(0.0001), 'sgd', '0.0001', 'relu'),
+        #
+        # (16, 1000, None, tf.keras.optimizers.SGD(0.1), 'sgd', '0.1', 'linear'),
+        # (16, 1000, None, tf.keras.optimizers.SGD(0.01), 'sgd', '0.01', 'linear'),
+        # (16, 1000, None, tf.keras.optimizers.SGD(0.001), 'sgd', '0.001', 'linear'),
+        # (16, 1000, None, tf.keras.optimizers.SGD(0.0001), 'sgd', '0.0001', 'linear'),
+        #
+        # (16, 1000, None, tf.keras.optimizers.Adam(0.1), 'adam', '0.1', 'linear'),
+        # (16, 1000, None, tf.keras.optimizers.Adam(0.01), 'adam', '0.01', 'linear'),
+        # (16, 1000, None, tf.keras.optimizers.Adam(0.001), 'adam', '0.001', 'linear'),
+        # (16, 1000, None, tf.keras.optimizers.Adam(0.0001), 'adam', '0.0001', 'linear'),
+        #
+        # (16, 1000, None, tf.keras.optimizers.Adam(0.1), 'adam', '0.1', 'relu'),
+        # (16, 1000, None, tf.keras.optimizers.Adam(0.0), 'adam', '0.01', 'relu'),
+        # (16, 1000, None, tf.keras.optimizers.Adam(0.01), 'adam', '0.01', 'relu'),
+        # (16, 1000, None, tf.keras.optimizers.Adam(0.001), 'adam', '0.001', 'relu'),
+        # (16, 1000, None, tf.keras.optimizers.Adam(0.0001), 'adam', '0.0001', 'relu'),
+
     additional_features = [
         [],
-        # ['sblp'],
+        # ['slbp'],
         # ['ryser'],
-        # ['sblp', 'ryser'],
+        # ['slbp', 'ryser'],
     ]
-    result_folder_prefix = 'results/long-running-tmp8'
+    result_folder_prefix = 'results/optimizer-test-7'
     os.makedirs(result_folder_prefix, exist_ok=True)
     csv_file = open(f'{result_folder_prefix}/summary.csv', 'w')
     csv_writer = csv.writer(csv_file)
@@ -425,8 +469,12 @@ if __name__ == '__main__':
         "time (s)",
     ])
 
+    best = {
+        'name': None,
+        'avg': None,
+    }
     for size_param in size_params:
-        (size, desired_samples, dropout_rate) = size_param
+        (size, desired_samples, dropout_rate, optimizer, optimizer_name, optimiser_extent, activation_function) = size_param
         # samples = int(250 * (size * size) / (8 * 8))
         print(f'{size:>02}x{size:>02}\t{desired_samples} pcs')
         start_per_size_param = timer()
@@ -436,21 +484,27 @@ if __name__ == '__main__':
             for additional_feature in additional_features:
                 print(f'\t\tadditional features: {" + ".join(additional_feature)}')
 
-                enable_sblp = 'sblp' in additional_feature
+                enable_sblp = 'slbp' in additional_feature
                 enable_ryser = 'ryser' in additional_feature
                 # Fixing random state for reproducibility
-                tf.keras.utils.set_random_seed(435242)
+                # tf.keras.utils.set_random_seed(435242)
                 # if True:
-                result_folder = f'{result_folder_prefix}/{image_name}-{size}x{size}-{desired_samples}pcs'
+                result_subfolder = f'{optimizer_name}-{activation_function}-{optimiser_extent}-{image_name}-{size}x{size}-{desired_samples}pcs'
                 if enable_sblp:
-                    result_folder += '-sblp'
+                    result_subfolder += '-sblp'
                 if enable_ryser:
-                    result_folder += '-ryser'
+                    result_subfolder += '-ryser'
 
-                if dropout_rate is not None:
-                    result_folder += '-dropout'
-                try:
-                # if True:
+                result_subfolder += '-'
+                if dropout_rate is None:
+                    result_subfolder += '0.0'
+                else:
+                    result_subfolder += str(dropout_rate)
+                result_subfolder += 'dropout'
+
+                result_folder = f'{result_folder_prefix}/{result_subfolder}'
+                # try:
+                if True:
                     start = timer()
                     res = main(
                         result_folder=result_folder,
@@ -460,6 +514,8 @@ if __name__ == '__main__':
                         input_sblp=enable_sblp,
                         input_ryser=enable_ryser,
                         dropout_rate=dropout_rate,
+                        optimizer=optimizer,
+                        activation_function=activation_function,
                     )
                     end = timer()
                     print(
@@ -494,11 +550,15 @@ if __name__ == '__main__':
                         res["nn"]["std"]/100,
                         f'{end - start:.2f}',
                     ])
-                except Exception:
-                    print('some error')
+                    if best['name'] is None or best['avg'] > res['nn']['avg']:
+                        best['name'] = result_subfolder
+                        best['avg'] = res['nn']['avg']
+                # except Exception:
+                #     print('some error')
             end_per_image = timer()
             print(f'\t\t\t[PER IMAGE]\n\t\t\tTime: {end_per_image-start_per_image:.2f} s\n\n')
         end_per_size_param = timer()
         print(f'\t\t\t[PER SIZE-PARAM]\n\t\t\tTime: {end_per_size_param-start_per_size_param:.2f} s\n\n')
 
     csv_file.close()
+    print(best)
