@@ -89,7 +89,7 @@ def create_model(layers, model_path, optimizer):
     # dropout -> továbbtanítás
     # linear activation function???
     # early stopping 500 epoch-ról megnézni, ahol nem történik érdemi változás
-    model.compile(optimizer=optimizer, loss='binary_crossentropy', metrics=['accuracy', 'mae'])
+    model.compile(optimizer=optimizer, loss='binary_crossentropy', metrics=['mae'])
 
     return model
 
@@ -332,7 +332,7 @@ def main(result_folder, image_path, image_size, desired_samples, input_sblp, inp
         epochs=epochs,
         shuffle=shuffle,
         verbose=verbose,
-        validation_split=1-pareto_limit
+        validation_split=0.25,  # 20% test, 20% validation, 60% training
     )
 
     # list all data in history
