@@ -19,7 +19,6 @@ from keras.utils.vis_utils import plot_model    # a modell vizualizációjához
 import tensorflow as tf
 from keras.models import Sequential
 from keras.layers import Dense, Dropout, Activation
-from tensorflow.keras.optimizers import Adam
 
 import matplotlib.pyplot as plt
 # %matplotlib inline # for jupyter-notebook
@@ -29,7 +28,7 @@ from timeit import default_timer as timer   # for verbose output
 from helpers import *
 
 
-INFO_LEVEL = 1
+INFO_LEVEL = 0
 
 
 class Layer:
@@ -63,7 +62,7 @@ class Layer:
         return Dropout(rate=self.dropout_rate, name=f'{self.name}-dropout-{postfix}')
 
 
-def create_model(layers, model_path):
+def create_model(layers, model_path, optimizer):
     model = Sequential()
 
     for layer in layers:
@@ -85,12 +84,13 @@ def create_model(layers, model_path):
         to_file=model_path
     )
 
-    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['mae'])
+    model.compile(optimizer=optimizer, loss='binary_crossentropy', metrics=['mae'])
+    # model.compile(optimizer=optimizer, loss='mean_squared_error', metrics=['mae'])
 
-    return model
+    return model, 'loss: binary_crossentropy'
 
 
-def print_info(predicts, Y_test, result_folder, desired_samples, image_size, input_sblp, input_ryser):
+def print_info(predicts, Y_test, result_folder, desired_samples, image_size, input_sblp, input_ryser, additional=''):
     max_picture = 10
     for i in range(len(predicts)):
         if max_picture == 0:
@@ -130,6 +130,8 @@ def print_info(predicts, Y_test, result_folder, desired_samples, image_size, inp
         predicted_ryser = ryser_algorithm(Y_test[i].reshape(image_size, image_size))
         original = Y_test[i].reshape(image_size, image_size)
 
+        if original.sum() == 0:
+            continue
         results['ryser']['rme'].append(relative_mean_error(original, predicted_ryser))
         results['ryser']['pe'].append(pixel_error(original, predicted_ryser))
         results['nn']['rme'].append(relative_mean_error(original, predicted_nn))
@@ -156,6 +158,8 @@ def print_info(predicts, Y_test, result_folder, desired_samples, image_size, inp
         f.write(f'    * std      {np.std(results["ryser"]["pe"]):>7.2f} %    {np.std(results["nn"]["pe"]):>7.2f} %\n')
         f.write(f'    * median   {np.median(results["ryser"]["pe"]):>7.2f} %    {np.median(results["nn"]["pe"]):>7.2f} %\n')
         f.write(f'\n')
+        f.write(f'additional: {additional}\n')
+        f.write(f'\n')
     return {
         'ryser': {
             'min': round(float(np.min(results["ryser"]["rme"])), 2),
@@ -172,7 +176,7 @@ def print_info(predicts, Y_test, result_folder, desired_samples, image_size, inp
     }
 
 
-def main(result_folder, images, size, samples_per_image, features, features_folder):
+def main(result_folder, images, size, samples_per_image, features, features_folder, optimizer):
     os.makedirs(result_folder)
 
     raw_extracted_features = []
@@ -251,11 +255,13 @@ def main(result_folder, images, size, samples_per_image, features, features_fold
     l2 = int(l1+lh)
     if INFO_LEVEL >= 1:
         print(f'{feature_nodes} > {l1} > {l2} > {result_nodes}\n{lh}')
-    model = create_model(
+    model, additional_info = create_model(
         layers=[
             # 64x64
             Layer('input', Dense, l1, 'relu', input_nodes=feature_nodes),
-            Layer('hidden-1', Dense, l2, 'relu', dropout_rate=None),
+            Layer('hidden-1', Dense, 3*l2, 'relu', dropout_rate=None),
+            Layer('hidden-2', Dense, 3*l2, 'relu', dropout_rate=None),
+            Layer('hidden-3', Dense, 3*l2, 'relu', dropout_rate=None),
 
             # # 128x128
             # Layer('input', Dense, 8448, 'relu', input_nodes=feature_nodes),
@@ -269,6 +275,7 @@ def main(result_folder, images, size, samples_per_image, features, features_fold
             Layer('output', Dense, result_nodes, 'sigmoid'),
         ],
         model_path=f'{result_folder}/model.png',
+        optimizer=optimizer,
     )
 
     # X_train = []
@@ -381,7 +388,7 @@ def main(result_folder, images, size, samples_per_image, features, features_fold
 
     score, mae = model.evaluate(test_extracted_features, test_origins)
     if INFO_LEVEL >= 1:
-        print('Test categorical_crossentropy:', score)
+        print('Test score:', score)
         print('Test mae:', mae)
 
 
@@ -398,6 +405,7 @@ def main(result_folder, images, size, samples_per_image, features, features_fold
         result_folder=result_folder,
         input_sblp='slbp' in features,
         input_ryser='ryser' in features,
+        additional=additional_info,
     )
 
 
@@ -411,20 +419,79 @@ if __name__ == '__main__':
         {
             'images': ['phan', 'brod', 'real'],
             'size': 16,
-            'samples_per_image': 1000,
+            'samples_per_image': 4000,
             'features': ['proj'],
             'features_folder': 'features',
+            'optimizer': tf.keras.optimizers.Adam(learning_rate=0.01),
+            'result-name-prefix': 'Adam01',
         },
         {
             'images': ['phan', 'brod', 'real'],
             'size': 16,
-            'samples_per_image': 1000,
+            'samples_per_image': 4000,
             'features': ['proj', 'slbp'],
             'features_folder': 'features',
+            'optimizer': tf.keras.optimizers.Adam(learning_rate=0.01),
+            'result-name-prefix': 'Adam_01',
         },
     ]
 
-    result_folder_prefix = 'extracted-features-results/1'
+    params = []
+    size_and_samples = [
+        # (16, 1000),
+        # (16, 2000),
+        (32, 4000),
+    ]
+    features = [
+        ['proj'],
+        # ['slbp'],
+        # ['ryser'],
+        ['proj', 'slbp'],
+        ['ryser', 'slbp']
+    ]
+    optimizers = [
+        ('Adam_0.1000', tf.keras.optimizers.Adam(learning_rate=0.1)),
+        ('Adam_0.0100', tf.keras.optimizers.Adam(learning_rate=0.01)),
+        ('Adam_0.0010', tf.keras.optimizers.Adam(learning_rate=0.001)),
+        ('Adam_0.0001', tf.keras.optimizers.Adam(learning_rate=0.0001)),
+        # ('Adam_0.0500', tf.keras.optimizers.Adam(learning_rate=0.05)),
+        # ('Adam_0.0250', tf.keras.optimizers.Adam(learning_rate=0.025)),
+        # ('Adam_0.0125', tf.keras.optimizers.Adam(learning_rate=0.0125)),
+        # ('Adam_0.0062', tf.keras.optimizers.Adam(learning_rate=0.0062)),
+        # ('Adam_0.0031', tf.keras.optimizers.Adam(learning_rate=0.0031)),
+        # ('Adam_0.0015', tf.keras.optimizers.Adam(learning_rate=0.0015)),
+        # ('Adam_0.0007', tf.keras.optimizers.Adam(learning_rate=0.0007)),
+        # ('Adam_0.0003', tf.keras.optimizers.Adam(learning_rate=0.0003)),
+        # ('Adam_0.0001', tf.keras.optimizers.Adam(learning_rate=0.0001)),
+        # ('SGD_0.1000', tf.keras.optimizers.SGD(learning_rate=0.1)),
+        # ('SGD_0.0100', tf.keras.optimizers.SGD(learning_rate=0.01)),
+        # ('SGD_0.0010', tf.keras.optimizers.SGD(learning_rate=0.001)),
+        # ('SGD_0.0001', tf.keras.optimizers.SGD(learning_rate=0.0001)),
+        # ('SGD_0.0500', tf.keras.optimizers.SGD(learning_rate=0.05)),
+        # ('SGD_0.0250', tf.keras.optimizers.SGD(learning_rate=0.025)),
+        # ('SGD_0.0125', tf.keras.optimizers.SGD(learning_rate=0.0125)),
+        # ('SGD_0.0062', tf.keras.optimizers.SGD(learning_rate=0.0062)),
+        # ('SGD_0.0031', tf.keras.optimizers.SGD(learning_rate=0.0031)),
+        # ('SGD_0.0015', tf.keras.optimizers.SGD(learning_rate=0.0015)),
+        # ('SGD_0.0007', tf.keras.optimizers.SGD(learning_rate=0.0007)),
+        # ('SGD_0.0003', tf.keras.optimizers.SGD(learning_rate=0.0003)),
+        # ('SGD_0.0001', tf.keras.optimizers.SGD(learning_rate=0.0001)),
+    ]
+    for (size, sample) in size_and_samples:
+        for feature in features:
+            for (optimizer_name, optimizer) in optimizers:
+                params.append(
+                    {
+                        'images': ['phan', 'brod', 'real'],
+                        'size': size,
+                        'samples_per_image': sample,
+                        'features': feature,
+                        'features_folder': 'features2',
+                        'optimizer': optimizer,
+                        'result-name-prefix': optimizer_name,
+                    }
+                )
+    result_folder_prefix = 'extracted-features-results/6'
     os.makedirs(result_folder_prefix, exist_ok=True)
     csv_file = open(f'{result_folder_prefix}/summary.csv', 'w')
     csv_writer = csv.writer(csv_file)
@@ -445,6 +512,7 @@ if __name__ == '__main__':
         "time (s)",
     ])
 
+    run_cnt = 0
     for param in params:
         # samples = int(250 * (size * size) / (8 * 8))
         size = param['size']
@@ -452,14 +520,17 @@ if __name__ == '__main__':
         images = param['images']
         features = param['features']
         features_folder = param['features_folder']
+        optimizer = param['optimizer']
+        result_name_prefix = param['result-name-prefix']
 
         print(f'{size:>02}x{size:>02}\t{samples_per_image}pcs/image-{"-".join(images)}')
         start_per_param = timer()
 
         # Fixing random state for reproducibility
-        tf.keras.utils.set_random_seed(1)
+        tf.keras.utils.set_random_seed(46842)
 
-        result_folder = f'{result_folder_prefix}/{size}x{size}-{samples_per_image}pcs/image-{":".join(images)}-{":".join(features)}'
+        result_folder = f'{result_folder_prefix}/{size}x{size}-{samples_per_image}pcs/'
+        result_folder += f'{result_name_prefix}-{"_".join(images)}-{"_".join(features)}'
         if True:
         # try:
             start = timer()
@@ -470,9 +541,9 @@ if __name__ == '__main__':
                 samples_per_image=samples_per_image,
                 features=features,
                 features_folder=features_folder,
+                optimizer=optimizer,
             )
             end = timer()
-            continue
             print(
                 f'\t\t\tRS: '
                 f'min: {res["ryser"]["min"]:>7.2f} % '
@@ -509,5 +580,7 @@ if __name__ == '__main__':
 
         end_per_param = timer()
         print(f'\t\t\t[PER PARAM]\n\t\t\tTime: {end_per_param-start_per_param:.2f} s\n\n')
+        run_cnt += 1
+        print(f'{run_cnt} / {len(params)}')
 
     csv_file.close()
