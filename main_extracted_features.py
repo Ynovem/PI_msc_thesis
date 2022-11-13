@@ -85,7 +85,7 @@ def create_model(layers, model_path):
         to_file=model_path
     )
 
-    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy', 'mae'])
+    model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['mae'])
 
     return model
 
@@ -175,54 +175,102 @@ def print_info(predicts, Y_test, result_folder, desired_samples, image_size, inp
 def main(result_folder, images, size, samples_per_image, features, features_folder):
     os.makedirs(result_folder)
 
-    extracted_features = []
+    raw_extracted_features = []
     for image in images:
         with open(f'{features_folder}/{image}-{size}x{size}.txt', 'r') as f:
             for x in range(samples_per_image):
-                extracted_features.append(json.loads(next(f).strip()))
+                raw_extracted_features.append(json.loads(next(f).strip()))
+    # print(len(origins))
+    # print(len(extracted_features))
+    # print(extracted_features[1])
 
-    print(extracted_features[1])
-    print(len(extracted_features))
-    # pareto_limit = 0.8
-    #
-    # train_sub_images, test_sub_images = np.split(all_sub_images, [int(all_sub_images.shape[0] * pareto_limit)])
-    # if INFO_LEVEL >= 1:
-    #     print(f'Train set: {train_sub_images.shape}')
-    #     print(f'Test set: {test_sub_images.shape}')
-    #
-    # feature_nodes = image_size + image_size
-    # if input_sblp:
-    #     feature_nodes += 256
-    # if input_ryser:
-    #     feature_nodes += image_size * image_size
-    #
-    # result_nodes = image_size * image_size
-    #
-    # lh = int((result_nodes-feature_nodes)/2)
-    # l1 = int(feature_nodes+lh)
-    # l2 = int(l1+lh)
-    # if INFO_LEVEL >= 1:
-    #     print(f'{feature_nodes} > {l1} > {l2} > {result_nodes}\n{lh}')
-    # model = create_model(
-    #     layers=[
-    #         # 64x64
-    #         Layer('input', Dense, l1, 'relu', input_nodes=feature_nodes),
-    #         Layer('hidden-1', Dense, l2, 'relu', dropout_rate=dropout_rate),
-    #
-    #         # # 128x128
-    #         # Layer('input', Dense, 8448, 'relu', input_nodes=feature_nodes),
-    #         # Layer('hidden-1', Dense, 16384, 'relu'),
-    #
-    #         # Layer('input', Dense, 672, 'relu', input_nodes=feature_nodes),
-    #         # Layer('hidden-1', Dense, 1024, 'relu'),
-    #
-    #         # Layer('input', Dense, 512, 'relu', input_nodes=feature_nodes),
-    #         # Layer('hidden-1', Dense, 2048, 'relu'),
-    #         Layer('output', Dense, result_nodes, 'sigmoid'),
-    #     ],
-    #     model_path=f'{result_folder}/model.png',
-    # )
-    #
+    raw_extracted_features = np.array(raw_extracted_features)
+    np.random.shuffle(raw_extracted_features)
+    raw_train, raw_test = np.split(raw_extracted_features, [int(raw_extracted_features.shape[0] * 0.9)])
+    if INFO_LEVEL >= 1:
+        print(f'Train set: {raw_train.shape}')
+        print(f'Test set: {raw_test.shape}')
+
+    train_extracted_features = []
+    train_origins = []
+    for raw in raw_test:
+        extracted_features_helper = []
+        if 'proj' in features:
+            proj_a = raw['proj']['ver']
+            proj_a_max = np.amax(proj_a)
+            if proj_a_max > 0:
+                proj_a /= proj_a_max
+
+            proj_b = raw['proj']['hor']
+            proj_b_max = np.amax(proj_b)
+            if proj_b_max > 0:
+                proj_b /= proj_b_max
+
+            extracted_features_helper.append(proj_a)
+            extracted_features_helper.append(proj_b)
+        if 'slbp' in features:
+            extracted_features_helper.append(np.array(raw['slbp']))
+        if 'ryser' in features:
+            extracted_features_helper.append(np.array(raw['ryser']).reshape(size * size))
+        train_extracted_features.append(np.concatenate(extracted_features_helper))
+        train_origins.append(np.array(raw['orig']).reshape(size*size))
+    train_extracted_features = np.array(train_extracted_features)
+    train_origins = np.array(train_origins)
+
+    test_extracted_features = []
+    test_origins = []
+    for raw in raw_test:
+        extracted_features_helper = []
+        if 'proj' in features:
+            proj_a = raw['proj']['ver']
+            proj_a_max = np.amax(proj_a)
+            if proj_a_max > 0:
+                proj_a /= proj_a_max
+
+            proj_b = raw['proj']['hor']
+            proj_b_max = np.amax(proj_b)
+            if proj_b_max > 0:
+                proj_b /= proj_b_max
+
+            extracted_features_helper.append(proj_a)
+            extracted_features_helper.append(proj_b)
+        if 'slbp' in features:
+            extracted_features_helper.append(np.array(raw['slbp']))
+        if 'ryser' in features:
+            extracted_features_helper.append(np.array(raw['ryser']).reshape(size * size))
+        test_extracted_features.append(np.concatenate(extracted_features_helper))
+        test_origins.append(np.array(raw['orig']).reshape(size*size))
+    test_extracted_features = np.array(test_extracted_features)
+    test_origins = np.array(test_origins)
+
+    feature_nodes = len(train_extracted_features[0])
+    result_nodes = len(train_origins[0])
+
+    lh = int((result_nodes-feature_nodes)/2)
+    l1 = int(feature_nodes+lh)
+    l2 = int(l1+lh)
+    if INFO_LEVEL >= 1:
+        print(f'{feature_nodes} > {l1} > {l2} > {result_nodes}\n{lh}')
+    model = create_model(
+        layers=[
+            # 64x64
+            Layer('input', Dense, l1, 'relu', input_nodes=feature_nodes),
+            Layer('hidden-1', Dense, l2, 'relu', dropout_rate=None),
+
+            # # 128x128
+            # Layer('input', Dense, 8448, 'relu', input_nodes=feature_nodes),
+            # Layer('hidden-1', Dense, 16384, 'relu'),
+
+            # Layer('input', Dense, 672, 'relu', input_nodes=feature_nodes),
+            # Layer('hidden-1', Dense, 1024, 'relu'),
+
+            # Layer('input', Dense, 512, 'relu', input_nodes=feature_nodes),
+            # Layer('hidden-1', Dense, 2048, 'relu'),
+            Layer('output', Dense, result_nodes, 'sigmoid'),
+        ],
+        model_path=f'{result_folder}/model.png',
+    )
+
     # X_train = []
     # Y_train = []
     # train_cnt = 0
@@ -278,47 +326,48 @@ def main(result_folder, images, size, samples_per_image, features, features_fold
     # # print(f'Base set: {all_sub_images.shape}')
     #
     #
-    # # Note: lower batch_size help to the training depending on the training-set size
-    # # batch_size = int(desired_samples/64)
-    # batch_size = 128
-    # epochs = 50
-    # shuffle = True
-    # verbose = INFO_LEVEL >= 1
-    # history = model.fit(
-    #     X_train,
-    #     Y_train,
-    #     batch_size=batch_size,
-    #     epochs=epochs,
-    #     shuffle=shuffle,
-    #     verbose=verbose,
-    #     validation_split=1-pareto_limit
-    # )
-    #
-    # # list all data in history
-    # if INFO_LEVEL >= 1:
-    #     print(history.history.keys())
-    # # summarize history for mae
-    # fig, ax = plt.subplots(nrows=1, ncols=1)  # create figure & 1 axis
-    # ax.plot(history.history['mae'])
-    # ax.plot(history.history['val_mae'])
-    # ax.set_title('model mae')
-    # ax.set_ylabel('mae')
-    # ax.set_xlabel('epoch')
-    # ax.legend(['train', 'test'], loc='upper left')
-    # fig.savefig(f'{result_folder}/mae.png')  # save the figure to file
-    # plt.close(fig)  # close the figure window
-    #
-    # # summarize history for loss
-    # fig, ax = plt.subplots(nrows=1, ncols=1)  # create figure & 1 axis
-    # ax.plot(history.history['loss'])
-    # ax.plot(history.history['val_loss'])
-    # ax.set_title('model loss')
-    # ax.set_ylabel('loss')
-    # ax.set_xlabel('epoch')
-    # ax.legend(['train', 'test'], loc='upper left')
-    # fig.savefig(f'{result_folder}/loss.png')  # save the figure to file
-    # plt.close(fig)  # close the figure window
-    #
+    # Note: lower batch_size help to the training depending on the training-set size
+    # batch_size = int(desired_samples/64)
+    batch_size = 128
+    epochs = 50
+    shuffle = True
+    verbose = INFO_LEVEL >= 1
+
+    history = model.fit(
+        train_extracted_features,
+        train_origins,
+        batch_size=batch_size,
+        epochs=epochs,
+        shuffle=shuffle,
+        verbose=verbose,
+        validation_split=0.1
+    )
+
+    # list all data in history
+    if INFO_LEVEL >= 1:
+        print(history.history.keys())
+    # summarize history for mae
+    fig, ax = plt.subplots(nrows=1, ncols=1)  # create figure & 1 axis
+    ax.plot(history.history['mae'])
+    ax.plot(history.history['val_mae'])
+    ax.set_title('model mae')
+    ax.set_ylabel('mae')
+    ax.set_xlabel('epoch')
+    ax.legend(['train', 'test'], loc='upper left')
+    fig.savefig(f'{result_folder}/mae.png')  # save the figure to file
+    plt.close(fig)  # close the figure window
+
+    # summarize history for loss
+    fig, ax = plt.subplots(nrows=1, ncols=1)  # create figure & 1 axis
+    ax.plot(history.history['loss'])
+    ax.plot(history.history['val_loss'])
+    ax.set_title('model loss')
+    ax.set_ylabel('loss')
+    ax.set_xlabel('epoch')
+    ax.legend(['train', 'test'], loc='upper left')
+    fig.savefig(f'{result_folder}/loss.png')  # save the figure to file
+    plt.close(fig)  # close the figure window
+
     # # summarize history for accuracy
     # fig, ax = plt.subplots(nrows=1, ncols=1)  # create figure & 1 axis
     # ax.plot(history.history['accuracy'])
@@ -329,27 +378,27 @@ def main(result_folder, images, size, samples_per_image, features, features_fold
     # ax.legend(['train', 'test'], loc='upper left')
     # fig.savefig(f'{result_folder}/accuracy.png')  # save the figure to file
     # plt.close(fig)  # close the figure window
-    #
-    # score, accuracy = model.evaluate(X_test, Y_test)
-    # if INFO_LEVEL >= 1:
-    #     print('Test categorical_crossentropy:', score)
-    #     print('Test accuracy:', accuracy)
-    #
-    #
-    # predicts = model.predict(X_test)
-    # if INFO_LEVEL >= 1:
-    #     print(X_test.shape)
-    #     print(predicts.shape)
-    #
-    # return print_info(
-    #     predicts=predicts,
-    #     Y_test=Y_test,
-    #     image_size=image_size,
-    #     desired_samples=desired_samples,
-    #     result_folder=result_folder,
-    #     input_sblp=input_sblp, input_ryser=input_ryser
-    # )
 
+    score, mae = model.evaluate(test_extracted_features, test_origins)
+    if INFO_LEVEL >= 1:
+        print('Test categorical_crossentropy:', score)
+        print('Test mae:', mae)
+
+
+    predicts = model.predict(test_extracted_features)
+    if INFO_LEVEL >= 1:
+        print(test_extracted_features.shape)
+        print(predicts.shape)
+
+    return print_info(
+        predicts=predicts,
+        Y_test=test_origins,
+        image_size=size,
+        desired_samples=len(images)*samples_per_image,
+        result_folder=result_folder,
+        input_sblp='slbp' in features,
+        input_ryser='ryser' in features,
+    )
 
 
 if __name__ == '__main__':
@@ -423,6 +472,7 @@ if __name__ == '__main__':
                 features_folder=features_folder,
             )
             end = timer()
+            continue
             print(
                 f'\t\t\tRS: '
                 f'min: {res["ryser"]["min"]:>7.2f} % '
