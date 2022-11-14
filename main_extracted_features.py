@@ -18,7 +18,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 from keras.utils.vis_utils import plot_model    # a modell vizualizációjához
 import tensorflow as tf
 from keras.models import Sequential
-from keras.layers import Dense, Dropout, Activation
+from keras.layers import Dense, Dropout, Activation, BatchNormalization
 
 import matplotlib.pyplot as plt
 # %matplotlib inline # for jupyter-notebook
@@ -32,13 +32,14 @@ INFO_LEVEL = 0
 
 
 class Layer:
-    def __init__(self, name, layer_ctor, nodes, activation, input_nodes=0, dropout_rate=None):
+    def __init__(self, name, layer_ctor, nodes, activation, input_nodes=0, dropout_rate=None, batch_normalization=None):
         self.layer_ctor = layer_ctor
         self.nodes = nodes
         self.activation = activation
         self.name = name
         self.input_nodes = input_nodes
         self.dropout_rate = dropout_rate
+        self.batch_normalization = batch_normalization
 
     def create(self):
         if self.input_nodes:
@@ -61,16 +62,25 @@ class Layer:
     def create_dropout(self, postfix):
         return Dropout(rate=self.dropout_rate, name=f'{self.name}-dropout-{postfix}')
 
+    def need_batchnormalization(self):
+        return self.batch_normalization is not None
 
-def create_model(layers, model_path, optimizer):
+    def create_batchnormalization(self, postfix):
+        return BatchNormalization(name=f'{self.name}-batch-normalization-{postfix}')
+
+
+def create_model(layers, model_path, optimizer, loss):
     model = Sequential()
 
+    hidden_layer_cnt = 1
     for layer in layers:
-        if layer.need_dropout():
-            model.add(layer.create_dropout(1))
         model.add(layer.create())
         if layer.need_dropout():
-            model.add(layer.create_dropout(2))
+            model.add(layer.create_dropout(hidden_layer_cnt))
+            hidden_layer_cnt += 1
+        if layer.need_batchnormalization():
+            model.add(layer.create_batchnormalization(hidden_layer_cnt))
+            hidden_layer_cnt += 1
 
     if INFO_LEVEL >= 1:
         model.summary()
@@ -84,14 +94,14 @@ def create_model(layers, model_path, optimizer):
         to_file=model_path
     )
 
-    model.compile(optimizer=optimizer, loss='binary_crossentropy', metrics=['mae'])
+    model.compile(optimizer=optimizer, loss=loss, metrics=['mae'])
     # model.compile(optimizer=optimizer, loss='mean_squared_error', metrics=['mae'])
 
-    return model, 'loss: binary_crossentropy'
+    return model, f'loss: {loss}'
 
 
 def print_info(predicts, Y_test, result_folder, desired_samples, image_size, input_sblp, input_ryser, additional=''):
-    max_picture = 10
+    max_picture = 100
     for i in range(len(predicts)):
         if max_picture == 0:
             break
@@ -176,76 +186,23 @@ def print_info(predicts, Y_test, result_folder, desired_samples, image_size, inp
     }
 
 
-def main(result_folder, images, size, samples_per_image, features, features_folder, optimizer):
+def main(
+        result_folder,
+        size,
+        samples_per_image,
+        features,
+        optimizer,
+        loss,
+        dropout_rate,
+        batchnormalization,
+        layer_multiplier,
+        neuron_multiplier,
+        train_extracted_features,
+        train_origins,
+        test_extracted_features,
+        test_origins,
+):
     os.makedirs(result_folder)
-
-    raw_extracted_features = []
-    for image in images:
-        with open(f'{features_folder}/{image}-{size}x{size}.txt', 'r') as f:
-            for x in range(samples_per_image):
-                raw_extracted_features.append(json.loads(next(f).strip()))
-    # print(len(origins))
-    # print(len(extracted_features))
-    # print(extracted_features[1])
-
-    raw_extracted_features = np.array(raw_extracted_features)
-    np.random.shuffle(raw_extracted_features)
-    raw_train, raw_test = np.split(raw_extracted_features, [int(raw_extracted_features.shape[0] * 0.9)])
-    if INFO_LEVEL >= 1:
-        print(f'Train set: {raw_train.shape}')
-        print(f'Test set: {raw_test.shape}')
-
-    train_extracted_features = []
-    train_origins = []
-    for raw in raw_test:
-        extracted_features_helper = []
-        if 'proj' in features:
-            proj_a = raw['proj']['ver']
-            proj_a_max = np.amax(proj_a)
-            if proj_a_max > 0:
-                proj_a /= proj_a_max
-
-            proj_b = raw['proj']['hor']
-            proj_b_max = np.amax(proj_b)
-            if proj_b_max > 0:
-                proj_b /= proj_b_max
-
-            extracted_features_helper.append(proj_a)
-            extracted_features_helper.append(proj_b)
-        if 'slbp' in features:
-            extracted_features_helper.append(np.array(raw['slbp']))
-        if 'ryser' in features:
-            extracted_features_helper.append(np.array(raw['ryser']).reshape(size * size))
-        train_extracted_features.append(np.concatenate(extracted_features_helper))
-        train_origins.append(np.array(raw['orig']).reshape(size*size))
-    train_extracted_features = np.array(train_extracted_features)
-    train_origins = np.array(train_origins)
-
-    test_extracted_features = []
-    test_origins = []
-    for raw in raw_test:
-        extracted_features_helper = []
-        if 'proj' in features:
-            proj_a = raw['proj']['ver']
-            proj_a_max = np.amax(proj_a)
-            if proj_a_max > 0:
-                proj_a /= proj_a_max
-
-            proj_b = raw['proj']['hor']
-            proj_b_max = np.amax(proj_b)
-            if proj_b_max > 0:
-                proj_b /= proj_b_max
-
-            extracted_features_helper.append(proj_a)
-            extracted_features_helper.append(proj_b)
-        if 'slbp' in features:
-            extracted_features_helper.append(np.array(raw['slbp']))
-        if 'ryser' in features:
-            extracted_features_helper.append(np.array(raw['ryser']).reshape(size * size))
-        test_extracted_features.append(np.concatenate(extracted_features_helper))
-        test_origins.append(np.array(raw['orig']).reshape(size*size))
-    test_extracted_features = np.array(test_extracted_features)
-    test_origins = np.array(test_origins)
 
     feature_nodes = len(train_extracted_features[0])
     result_nodes = len(train_origins[0])
@@ -255,90 +212,37 @@ def main(result_folder, images, size, samples_per_image, features, features_fold
     l2 = int(l1+lh)
     if INFO_LEVEL >= 1:
         print(f'{feature_nodes} > {l1} > {l2} > {result_nodes}\n{lh}')
+
+    layers = [Layer('input', Dense, l1, 'relu', input_nodes=feature_nodes)]
+    for layer in range(layer_multiplier):
+        layers.append(Layer(
+            name=f'hidden-{layer}',
+            layer_ctor=Dense,
+            nodes=neuron_multiplier * l2,
+            activation='relu',
+            dropout_rate=dropout_rate,
+            batch_normalization=batchnormalization,
+        ))
+    layers.append(Layer('output', Dense, result_nodes, 'sigmoid'))
     model, additional_info = create_model(
-        layers=[
-            # 64x64
-            Layer('input', Dense, l1, 'relu', input_nodes=feature_nodes),
-            Layer('hidden-1', Dense, 3*l2, 'relu', dropout_rate=None),
-            Layer('hidden-2', Dense, 3*l2, 'relu', dropout_rate=None),
-            Layer('hidden-3', Dense, 3*l2, 'relu', dropout_rate=None),
-
-            # # 128x128
-            # Layer('input', Dense, 8448, 'relu', input_nodes=feature_nodes),
-            # Layer('hidden-1', Dense, 16384, 'relu'),
-
-            # Layer('input', Dense, 672, 'relu', input_nodes=feature_nodes),
-            # Layer('hidden-1', Dense, 1024, 'relu'),
-
-            # Layer('input', Dense, 512, 'relu', input_nodes=feature_nodes),
-            # Layer('hidden-1', Dense, 2048, 'relu'),
-            Layer('output', Dense, result_nodes, 'sigmoid'),
-        ],
         model_path=f'{result_folder}/model.png',
         optimizer=optimizer,
+        loss=loss,
+        layers=layers,
     )
 
-    # X_train = []
-    # Y_train = []
-    # train_cnt = 0
-    # train_sub_images_len = len(train_sub_images)
-    # if INFO_LEVEL >= 1:
-    #     print(f'train set calculation [{train_sub_images_len}]')
-    # last_percentage = 1
-    # start = timer()
-    # for X_train_one in train_sub_images:
-    #     train_cnt += 1
-    #     X, Y = extract_features(X_train_one)
-    #     percentage = int(train_cnt/train_sub_images_len*100)
-    #     if percentage == last_percentage and percentage != 0:
-    #         last_percentage += 1
-    #         end = timer()
-    #         if INFO_LEVEL >= 1:
-    #             print(f'\t{percentage}% \t {train_cnt} from {train_sub_images_len} in {end-start} s')
-    #         start = timer()
-    #     X_train.append(X)
-    #     Y_train.append(Y)
-    #     # print(train_cnt)
-    # X_train = np.array(X_train)
-    # Y_train = np.array(Y_train)
-    #
-    # X_test = []
-    # Y_test = []
-    # test_cnt = 0
-    # test_sub_images_len = len(test_sub_images)
-    # if INFO_LEVEL >= 1:
-    #     print(f'test set calculation [{test_sub_images_len}]')
-    # last_percentage = 1
-    # start = timer()
-    # for X_test_one in test_sub_images:
-    #     test_cnt += 1
-    #     X, Y = extract_features(X_test_one)
-    #     percentage = int(test_cnt/test_sub_images_len*100)
-    #     if percentage == last_percentage and percentage != 0:
-    #         last_percentage += 1
-    #         end = timer()
-    #         if INFO_LEVEL >= 1:
-    #             print(f'\t{percentage}% \t {test_cnt} from {test_sub_images_len} in {end-start} s')
-    #         start = timer()
-    #     X_test.append(X)
-    #     Y_test.append(Y)
-    # X_test = np.array(X_test)
-    # Y_test = np.array(Y_test)
-    #
-    # # for r in range(int((raw_rows - image_size - 1)/image_size)):
-    # #     for c in range(int((raw_cols - image_size - 1)/image_size)):
-    # #         all_sub_images.append(raw_image[r:r+image_size, c:c+image_size])
-    #
-    # # all_sub_images = np.array(all_sub_images)
-    # # print(f'Base set: {all_sub_images.shape}')
-    #
-    #
-    # Note: lower batch_size help to the training depending on the training-set size
-    # batch_size = int(desired_samples/64)
     batch_size = 128
-    epochs = 50
+    epochs = 500
     shuffle = True
     verbose = INFO_LEVEL >= 1
+    additional_info += f'batch: {batch_size}\n'
+    additional_info += f'epochs: {epochs}\n'
+    additional_info += f'dropout_rate: {dropout_rate}\n'
+    additional_info += f'batchnormalization: {batchnormalization}\n'
+    additional_info += f'layer_multiplier: {layer_multiplier}\n'
+    additional_info += f'neuron_multiplier: {neuron_multiplier}\n'
+
+    early_stopping = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=5)
 
     history = model.fit(
         train_extracted_features,
@@ -347,7 +251,8 @@ def main(result_folder, images, size, samples_per_image, features, features_fold
         epochs=epochs,
         shuffle=shuffle,
         verbose=verbose,
-        validation_split=0.1
+        validation_split=0.1,
+        callbacks=[early_stopping]
     )
 
     # list all data in history
@@ -375,17 +280,6 @@ def main(result_folder, images, size, samples_per_image, features, features_fold
     fig.savefig(f'{result_folder}/loss.png')  # save the figure to file
     plt.close(fig)  # close the figure window
 
-    # # summarize history for accuracy
-    # fig, ax = plt.subplots(nrows=1, ncols=1)  # create figure & 1 axis
-    # ax.plot(history.history['accuracy'])
-    # ax.plot(history.history['val_accuracy'])
-    # ax.set_title('model accuracy')
-    # ax.set_ylabel('accuracy')
-    # ax.set_xlabel('epoch')
-    # ax.legend(['train', 'test'], loc='upper left')
-    # fig.savefig(f'{result_folder}/accuracy.png')  # save the figure to file
-    # plt.close(fig)  # close the figure window
-
     score, mae = model.evaluate(test_extracted_features, test_origins)
     if INFO_LEVEL >= 1:
         print('Test score:', score)
@@ -401,7 +295,7 @@ def main(result_folder, images, size, samples_per_image, features, features_fold
         predicts=predicts,
         Y_test=test_origins,
         image_size=size,
-        desired_samples=len(images)*samples_per_image,
+        desired_samples=3*samples_per_image,
         result_folder=result_folder,
         input_sblp='slbp' in features,
         input_ryser='ryser' in features,
@@ -437,32 +331,26 @@ if __name__ == '__main__':
     ]
 
     params = []
-    size_and_samples = [
-        # (16, 1000),
-        # (16, 2000),
-        (32, 4000),
-    ]
-    features = [
+    size = 16
+    sample = 10000
+    all_features = [
         ['proj'],
         # ['slbp'],
         # ['ryser'],
         ['proj', 'slbp'],
-        ['ryser', 'slbp']
+        ['ryser', 'slbp'],
     ]
     optimizers = [
         ('Adam_0.1000', tf.keras.optimizers.Adam(learning_rate=0.1)),
-        ('Adam_0.0100', tf.keras.optimizers.Adam(learning_rate=0.01)),
-        ('Adam_0.0010', tf.keras.optimizers.Adam(learning_rate=0.001)),
-        ('Adam_0.0001', tf.keras.optimizers.Adam(learning_rate=0.0001)),
         # ('Adam_0.0500', tf.keras.optimizers.Adam(learning_rate=0.05)),
-        # ('Adam_0.0250', tf.keras.optimizers.Adam(learning_rate=0.025)),
+        ('Adam_0.0250', tf.keras.optimizers.Adam(learning_rate=0.025)),
         # ('Adam_0.0125', tf.keras.optimizers.Adam(learning_rate=0.0125)),
-        # ('Adam_0.0062', tf.keras.optimizers.Adam(learning_rate=0.0062)),
+        ('Adam_0.0062', tf.keras.optimizers.Adam(learning_rate=0.0062)),
         # ('Adam_0.0031', tf.keras.optimizers.Adam(learning_rate=0.0031)),
-        # ('Adam_0.0015', tf.keras.optimizers.Adam(learning_rate=0.0015)),
+        ('Adam_0.0015', tf.keras.optimizers.Adam(learning_rate=0.0015)),
         # ('Adam_0.0007', tf.keras.optimizers.Adam(learning_rate=0.0007)),
-        # ('Adam_0.0003', tf.keras.optimizers.Adam(learning_rate=0.0003)),
-        # ('Adam_0.0001', tf.keras.optimizers.Adam(learning_rate=0.0001)),
+        ('Adam_0.0003', tf.keras.optimizers.Adam(learning_rate=0.0003)),
+        ('Adam_0.0001', tf.keras.optimizers.Adam(learning_rate=0.0001)),
         # ('SGD_0.1000', tf.keras.optimizers.SGD(learning_rate=0.1)),
         # ('SGD_0.0100', tf.keras.optimizers.SGD(learning_rate=0.01)),
         # ('SGD_0.0010', tf.keras.optimizers.SGD(learning_rate=0.001)),
@@ -477,21 +365,30 @@ if __name__ == '__main__':
         # ('SGD_0.0003', tf.keras.optimizers.SGD(learning_rate=0.0003)),
         # ('SGD_0.0001', tf.keras.optimizers.SGD(learning_rate=0.0001)),
     ]
-    for (size, sample) in size_and_samples:
-        for feature in features:
-            for (optimizer_name, optimizer) in optimizers:
-                params.append(
-                    {
-                        'images': ['phan', 'brod', 'real'],
-                        'size': size,
-                        'samples_per_image': sample,
-                        'features': feature,
-                        'features_folder': 'features2',
-                        'optimizer': optimizer,
-                        'result-name-prefix': optimizer_name,
-                    }
-                )
-    result_folder_prefix = 'extracted-features-results/6'
+    regularizations = [
+        (None, False),
+        (0.1, False),
+        (0.2, False),
+        (None, True),
+    ]
+    for (dropout_rate, batchnormalization) in regularizations:
+        for loss in ['binary_crossentropy', 'mean_squared_error']:
+            for features in all_features:
+                for (optimizer_name, optimizer) in optimizers:
+                    for layer_multiplier in [1, 2, 3]:
+                        for neuron_multiplier in [1, 2, 3]:
+                            params.append({
+                                'size': size,
+                                'features': features,
+                                'optimizer': optimizer,
+                                'result-name-prefix': optimizer_name,
+                                'loss': loss,
+                                'dropout_rate': dropout_rate,
+                                'batchnormalization': batchnormalization,
+                                'layer_multiplier': layer_multiplier,
+                                'neuron_multiplier': neuron_multiplier,
+                            })
+    result_folder_prefix = 'extracted-features-results/2'
     os.makedirs(result_folder_prefix, exist_ok=True)
     csv_file = open(f'{result_folder_prefix}/summary.csv', 'w')
     csv_writer = csv.writer(csv_file)
@@ -512,36 +409,124 @@ if __name__ == '__main__':
         "time (s)",
     ])
 
+
+    all_train_extracted_features = {}
+    all_train_origins = {}
+    all_test_extracted_features = {}
+    all_test_origins = {}
+    for features in all_features:
+        raw_extracted_features = []
+        for image in ['phan', 'brod', 'real']:
+            with open(f'features/{image}-{size}x{size}.txt', 'r') as f:
+                for x in range(sample):
+                    raw_extracted_features.append(json.loads(next(f).strip()))
+        raw_extracted_features = np.array(raw_extracted_features)
+        # print(len(origins))
+        # print(len(extracted_features))
+        # print(extracted_features[1])
+
+        np.random.shuffle(raw_extracted_features)
+        raw_train, raw_test = np.split(raw_extracted_features, [int(raw_extracted_features.shape[0] * 0.9)])
+        if INFO_LEVEL >= 1:
+            print(f'Train set: {raw_train.shape}')
+            print(f'Test set: {raw_test.shape}')
+
+        train_extracted_features = []
+        train_origins = []
+        for raw in raw_test:
+            extracted_features_helper = []
+            if 'proj' in features:
+                proj_a = raw['proj']['ver']
+                proj_a_max = np.amax(proj_a)
+                if proj_a_max > 0:
+                    proj_a /= proj_a_max
+
+                proj_b = raw['proj']['hor']
+                proj_b_max = np.amax(proj_b)
+                if proj_b_max > 0:
+                    proj_b /= proj_b_max
+
+                extracted_features_helper.append(proj_a)
+                extracted_features_helper.append(proj_b)
+            if 'slbp' in features:
+                extracted_features_helper.append(np.array(raw['slbp']))
+            if 'ryser' in features:
+                extracted_features_helper.append(np.array(raw['ryser']).reshape(size * size))
+            train_extracted_features.append(np.concatenate(extracted_features_helper))
+            train_origins.append(np.array(raw['orig']).reshape(size*size))
+        train_extracted_features = np.array(train_extracted_features)
+        train_origins = np.array(train_origins)
+
+        test_extracted_features = []
+        test_origins = []
+        for raw in raw_test:
+            extracted_features_helper = []
+            if 'proj' in features:
+                proj_a = raw['proj']['ver']
+                proj_a_max = np.amax(proj_a)
+                if proj_a_max > 0:
+                    proj_a /= proj_a_max
+
+                proj_b = raw['proj']['hor']
+                proj_b_max = np.amax(proj_b)
+                if proj_b_max > 0:
+                    proj_b /= proj_b_max
+
+                extracted_features_helper.append(proj_a)
+                extracted_features_helper.append(proj_b)
+            if 'slbp' in features:
+                extracted_features_helper.append(np.array(raw['slbp']))
+            if 'ryser' in features:
+                extracted_features_helper.append(np.array(raw['ryser']).reshape(size * size))
+            test_extracted_features.append(np.concatenate(extracted_features_helper))
+            test_origins.append(np.array(raw['orig']).reshape(size*size))
+        test_extracted_features = np.array(test_extracted_features)
+        test_origins = np.array(test_origins)
+
+        all_train_extracted_features['-'.join(features)] = train_extracted_features
+        all_train_origins['-'.join(features)] = train_origins
+        all_test_extracted_features['-'.join(features)] = test_extracted_features
+        all_test_origins['-'.join(features)] = test_origins
+
     run_cnt = 0
     for param in params:
         # samples = int(250 * (size * size) / (8 * 8))
         size = param['size']
-        samples_per_image = param['samples_per_image']
-        images = param['images']
         features = param['features']
-        features_folder = param['features_folder']
         optimizer = param['optimizer']
         result_name_prefix = param['result-name-prefix']
+        loss = param['loss']
+        dropout_rate = param['dropout_rate']
+        batchnormalization = param['batchnormalization']
+        layer_multiplier = param['layer_multiplier']
+        neuron_multiplier = param['neuron_multiplier']
 
-        print(f'{size:>02}x{size:>02}\t{samples_per_image}pcs/image-{"-".join(images)}')
+        print(f'{size:>02}x{size:>02}\t{sample}pcs/')
         start_per_param = timer()
 
         # Fixing random state for reproducibility
         tf.keras.utils.set_random_seed(46842)
 
-        result_folder = f'{result_folder_prefix}/{size}x{size}-{samples_per_image}pcs/'
-        result_folder += f'{result_name_prefix}-{"_".join(images)}-{"_".join(features)}'
+        result_folder = f'{result_folder_prefix}/{size}x{size}-{sample}pcs/{"_".join(features)}/'
+        result_folder += f'{result_name_prefix}/loss_{loss}-batch{str(batchnormalization)}-dropout{str(dropout_rate)}-layers_{layer_multiplier}-nodes_{neuron_multiplier}'
         if True:
         # try:
             start = timer()
             res = main(
                 result_folder=result_folder,
-                images=images,
                 size=size,
-                samples_per_image=samples_per_image,
+                samples_per_image=sample,
                 features=features,
-                features_folder=features_folder,
                 optimizer=optimizer,
+                loss=loss,
+                dropout_rate=dropout_rate,
+                batchnormalization=batchnormalization,
+                layer_multiplier=layer_multiplier,
+                neuron_multiplier=neuron_multiplier,
+                train_extracted_features=all_train_extracted_features['-'.join(features)],
+                train_origins=all_train_origins['-'.join(features)],
+                test_extracted_features=all_test_extracted_features['-'.join(features)],
+                test_origins=all_test_origins['-'.join(features)],
             )
             end = timer()
             print(
@@ -561,9 +546,9 @@ if __name__ == '__main__':
             print(f'\t\t\tTime: {end-start:.2f} s\n\n')
             csv_writer.writerow([
                 1,
-                "-".join(images),
+                'brodatz-phan-real',
                 size,
-                samples_per_image,
+                sample,
                 "-".join(features),
                 res["ryser"]["min"]/100,
                 res["ryser"]["max"]/100,
